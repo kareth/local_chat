@@ -1,0 +1,10 @@
+#!/usr/bin/env ruby
+
+regexp = /\A([qms]) (\d+)/
+
+`ipcs`.split("\n")
+      .select { |r| r =~ regexp }
+      .map { |r| r.match(regexp).to_a[1..2] }
+      .each do |type, id|
+         %x[ipcrm -#{type} #{id}]
+      end
