@@ -4,6 +4,41 @@ int rid, rsem, lsem;
 int mc, ms;
 REPO *repo;
 
+
+char user_name[50][50];
+int user_msg[50];
+int user_count = 0;
+
+void add_local_user(char * name, int id){
+  strcpy(user_name[user_count], name);
+  user_msg[user_count] = id;
+  user_count++;
+  printf("Adding user: %s %d\n", name, id);
+}
+
+void remove_local_user(char * name){
+  REP(i, user_count)
+    if( !strcmp(user_name[i], name)){
+      if( i != user_count - 1){
+        strcpy(user_name[i], user_name[user_count-1]);
+        user_msg[i] = user_msg[user_count-1];
+      }
+
+      user_count--;
+      break;
+    }
+}
+
+int get_user_id(char * name){
+  printf("checking user: %s\n",name);
+  REP(i, user_count)
+    if( !strcmp(user_name[i], name)){
+      return user_msg[i];
+    }
+  return -1;
+}
+
+
 void semP(int id){
   struct sembuf buf;
   buf.sem_flg = 0; buf.sem_num = 0; buf.sem_op = -1;
@@ -51,18 +86,25 @@ int comp_r(const void *a, const void *b){
 // Servers
 
 void register_server(){
+  srand(time(0));
   repo_on();
+  mc = getpid();
+  ms = rand()%2000000009;
+  printf("server_Q: %d\n", ms);
+
   msgget(getpid(), 0666 | IPC_CREAT);
+  msgget(ms, 0666 | IPC_CREAT);
   msgget(SERVER_LIST_MSG_KEY, 0666 | IPC_CREAT);
 
   SERVER clean;
-  mc = getpid();
-  ms = rand()%2000000009;
   clean.client_msgid = getpid();
   clean.server_msgid = ms;
   clean.clients = 0;
 
-  repo->servers[repo->active_servers] = clean;
+  repo->servers[repo->active_servers].client_msgid = mc;
+  repo->servers[repo->active_servers].server_msgid = ms;
+  repo->servers[repo->active_servers].clients = 0;
+
   repo->active_servers++;
   printf("active_servers: %d\n", repo->active_servers);
 
@@ -95,7 +137,9 @@ void rmem_init() {
   REPO *mem = shmat(rid, NULL, 0);
 
   REPO clean;
-  clean.active_clients = clean.active_rooms = clean.active_servers = 0;
+  clean.active_clients = 0;
+  clean.active_rooms = 0;
+  clean.active_servers = 0;
   REP(i, MAX_SERVER_NUM) clean.servers[i].client_msgid = INF;
   REP(j, MAX_CLIENTS) strcpy( clean.clients[j].name, NONAME );
   REP(k, MAX_CLIENTS){
@@ -213,17 +257,34 @@ void login_request() {
   res.status = validate_user(req.client_name);
 
   if( res.status == 201){
-    CLIENT client;
-    strcpy(client.name, req.client_name);
-    client.server_id = getpid();
-    // TODO this should increase value in room
-    strcpy(client.room, "");
+    int found = 0;
+    REP(i, repo->active_rooms)
+      if( !strcmp(repo->rooms[i].name, "") ){
+        found = 1;
+        repo->rooms[i].clients++;
+      }
 
-    repo->clients[repo->active_clients] = client;
+    if(found == 0){
+      strcpy(repo->rooms[repo->active_rooms].name, "");
+      repo->rooms[repo->active_rooms].clients = 1;
+      repo->active_rooms++;
+    }
+
+    strcpy(repo->clients[repo->active_clients].name, req.client_name);
+    repo->clients[repo->active_clients].server_id = mc;
+    strcpy(repo->clients[repo->active_clients].room, "");
+
     repo->active_clients++;
     qsort(repo->clients, MAX_CLIENTS, sizeof(CLIENT), comp_c);
+
+    add_local_user(req.client_name, req.client_msgid);
   }
   repo_off();
+
+  printf("USERS:\n");
+  REP(i, repo->active_clients){
+    printf("user: '%s', '%d', '%s' \n",repo->clients[i].name, repo->clients[i].server_id, repo->clients[i].room);
+  }
 
   int client_id = msgget(req.client_msgid, 0666);
   msgsnd(client_id, &res, sizeof(res), 0);
@@ -251,6 +312,8 @@ void logout_request() {
 
   qsort(repo->clients, MAX_CLIENTS, sizeof(CLIENT), comp_c);
 
+  remove_local_user(req.client_name);
+
   repo_off();
   return;
 }
@@ -274,24 +337,22 @@ void join_room_request() {
     }
 
   REP(j, repo->active_rooms)
-    if( !strcmp(repo->rooms[i].name, old_room)){
-      repo->rooms[i].clients--;
-      if( repo->rooms[i].clients == 0)
-        strcpy(repo->rooms[i].name, NONAME);
+    if( !strcmp(repo->rooms[j].name, old_room)){
+      repo->rooms[j].clients--;
+      if( repo->rooms[j].clients == 0)
+        strcpy(repo->rooms[j].name, NONAME);
     }
 
   int found = 0;
   REP(k, repo->active_rooms)
-    if( !strcmp(repo->rooms[i].name, req.room_name)){
+    if( !strcmp(repo->rooms[k].name, req.room_name)){
       found = 1;
-      repo->rooms[i].clients++;
+      repo->rooms[k].clients++;
     }
 
   if( found == 0){
-    ROOM room;
-    room.clients = 1;
-    strcpy(room.name, req.room_name);
-    repo->rooms[repo->active_rooms] = room;
+    strcpy(repo->rooms[repo->active_rooms].name, req.room_name);
+    repo->rooms[repo->active_rooms].clients = 1;
     repo->active_rooms++;
   }
 
@@ -330,16 +391,148 @@ void room_list_request() {
     strcpy(room.name, repo->rooms[i].name);
     room.clients = repo->rooms[i].clients;
     res.rooms[i] = room;
-    printf("room: %s %d\n", room.name, room.clients);
   }
-  printf("%d\n",repo->active_rooms);
 
   repo_off();
 
   int client_id = msgget(req.client_msgid, 0666);
-  if( msgsnd(client_id, &res, sizeof(res), 0) == -1) perror("error");
+  msgsnd(client_id, &res, sizeof(res), 0);
 }
 
+// GLOBAL USERS LIST
+//
+void all_users_request(){
+  CLIENT_REQUEST req;
+  int my_id = msgget(getpid(), 0666 | IPC_CREAT);
+  int result = msgrcv(my_id, &req, sizeof(req), GLOBAL_CLIENT_LIST, IPC_NOWAIT);
+  if(result == -1) return;
+
+  printf("request: GLOBAL_USERS_LIST\n");
+
+  repo_on();
+
+  GLOBAL_CLIENT_LIST_RESPONSE res;
+  res.type = GLOBAL_CLIENT_LIST;
+  res.active_clients = repo->active_clients;
+
+  REP(i, repo->active_clients)
+    strcpy(res.names[i], repo->clients[i].name);
+
+  repo_off();
+
+  int client_id = msgget(req.client_msgid, 0666);
+  msgsnd(client_id, &res, sizeof(res), 0);
+}
+
+// ROOM USERS LIST
+
+void users_here_request(){
+  CLIENT_REQUEST req;
+  int my_id = msgget(getpid(), 0666 | IPC_CREAT);
+  int result = msgrcv(my_id, &req, sizeof(req), ROOM_CLIENT_LIST, IPC_NOWAIT);
+  if(result == -1) return;
+
+  printf("request: ROOM_USERS_LIST\n");
+
+  repo_on();
+
+  ROOM_CLIENT_LIST_RESPONSE res;
+  res.type = ROOM_CLIENT_LIST;
+
+  char user_room[2000];
+  REP(i, repo->active_clients)
+    if(!strcmp(repo->clients[i].name, req.client_name)){
+      strcpy(user_room, repo->clients[i].room);
+      break;
+    }
+
+  int count = 0;
+
+  REP(j, repo->active_clients)
+    if( !strcmp(user_room, repo->clients[j].room)){
+      strcpy(res.names[i], repo->clients[j].name);
+      count++;
+    }
+
+  res.active_clients = count;
+
+  repo_off();
+
+  int client_id = msgget(req.client_msgid, 0666);
+  msgsnd(client_id, &res, sizeof(res), 0);
+}
+
+// MESSAGE
+
+void message_request(){
+  TEXT_MESSAGE msg;
+  int my_id = msgget(getpid(), 0666 | IPC_CREAT);
+  int result = msgrcv(my_id, &msg, sizeof(msg), PUBLIC, IPC_NOWAIT);
+  if(result == -1) return;
+
+  printf("request: PUBLIC MSG\n");
+  msg.from_id = ms;
+
+  int servers[30], servers_count;
+  repo_on();
+    servers_count = repo->active_servers;
+    REP(i, repo->active_servers)
+      servers[i] = repo->servers[i].server_msgid;
+  repo_off();
+
+  REP(j, servers_count){
+    int server_id = msgget(servers[j], 0666);
+    //if( fork() == 0){
+      printf("Sending msg '%s' to server %d\n",msg.text, servers[j]);
+      msgsnd(server_id, &msg, sizeof(msg), 0);
+    //}
+    //else{
+      //STATUS_RESPONSE res;
+      //msgrcv(server_id, &res, sizeof(res), STATUS, 0);
+      printf("STATUS RECEIVED\n");
+    //}
+  }
+  return;
+}
+
+void broadcast_message(){
+  TEXT_MESSAGE msg;
+  int server_id = msgget(ms, 0666 | IPC_CREAT);
+  int result = msgrcv(server_id, &msg, sizeof(msg), PUBLIC, IPC_NOWAIT);
+  if(result == -1) return;
+
+  printf("BROADCAST: \n");
+
+  msg.from_id = 0;
+  msg.type = PUBLIC;
+
+  repo_on();
+
+  char room[2000];
+  REP(i, repo->active_clients)
+    if( !strcmp(repo->clients[i].name, msg.from_name))
+      strcpy(room, repo->clients[i].room);
+
+  printf("room: '%s'\n",room);
+  REP(j, repo->active_clients){
+    printf("client servered to: %s %d %s\n",repo->clients[j].name, repo->clients[j].server_id, repo->clients[j].room);
+    if( repo->clients[j].server_id == mc){
+      printf("sending_to %d - %s\n",get_user_id(repo->clients[j].name), repo->clients[j].name );
+      int x = get_user_id(repo->clients[j].name);
+      int id = msgget( x, 0666);
+      printf("id: %d, x: %d\n",id, x);
+      msgsnd(id, &msg, sizeof(msg), 0);
+    }
+  }
+
+  repo_off();
+
+  STATUS_RESPONSE res;
+  res.type = STATUS;
+  res.status = ms;
+
+  msgsnd(server_id, &res, sizeof(res), 0);
+}
 
 // MAIN
 
@@ -363,6 +556,10 @@ int main() {
     logout_request();
     join_room_request();
     room_list_request();
+    all_users_request();
+    users_here_request();
+    message_request();
+    broadcast_message();
   }
 
   close_repo();
