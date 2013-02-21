@@ -398,8 +398,10 @@ void join_room_request() {
   REP(j, repo->active_rooms)
     if( !strcmp(repo->rooms[j].name, old_room)){
       repo->rooms[j].clients--;
-      if( repo->rooms[j].clients == 0)
+      if( repo->rooms[j].clients == 0){
         strcpy(repo->rooms[j].name, NONAME);
+        repo->active_rooms--;
+      }
     }
 
   int found = 0;
@@ -443,11 +445,9 @@ void room_list_request() {
   res.type = ROOM_LIST;
   res.active_rooms = repo->active_rooms;
 
-  REP(i, MAX_CLIENTS){
-    ROOM room;
-    strcpy(room.name, repo->rooms[i].name);
-    room.clients = repo->rooms[i].clients;
-    res.rooms[i] = room;
+  REP(i, repo->active_rooms){
+    strcpy(res.rooms[i].name, repo->rooms[i].name);
+    res.rooms[i].clients = repo->rooms[i].clients;
   }
 
   repo_off();
@@ -523,16 +523,18 @@ void message_request(){
   printf("request: PUBLIC MSG\n");
   msg.from_id = my_server;
 
-  int servers[MAX_SERVER_NUM], servers_count;
+  int server_msgids[MAX_SERVER_NUM], client_msgids[MAX_SERVER_NUM], servers_count;
   repo_on();
     servers_count = repo->active_servers;
-    REP(i, repo->active_servers)
-      servers[i] = repo->servers[i].server_msgid;
+    REP(i, repo->active_servers){
+      server_msgids[i] = repo->servers[i].server_msgid;
+      client_msgids[i] = repo->servers[i].client_msgid;
+    }
   repo_off();
 
   REP(j, servers_count){
-    start_waiting_for_server(servers[j]);
-    msgsnd(servers[j], &msg, sizeof(msg), 0);
+    start_waiting_for_server(client_msgids[j]);
+    msgsnd(server_msgids[j], &msg, sizeof(msg), 0);
   }
   return;
 }
@@ -563,7 +565,7 @@ void broadcast_message(){
 
   STATUS_RESPONSE res;
   res.type = STATUS;
-  res.status = my_server;
+  res.status = my_client;
 
   msgsnd(server_to_respond, &res, sizeof(res), 0);
 }
@@ -576,14 +578,19 @@ void look_for_user(TEXT_MESSAGE msg){
   }
   else{
     msg.from_id = my_server;
-    int rec_server;
+    int rec_server, rec_client;
     repo_on();
       REP(i, repo->active_clients)
         if(!strcmp(repo->clients[i].name, msg.to))
-          rec_server = repo->clients[i].server_id;
+          rec_client = repo->clients[i].server_id;
+
+      REP(j, repo->active_servers)
+        if( repo->servers[j].client_msgid == rec_client)
+          rec_server = repo->servers[j].server_msgid;
+
     repo_off();
 
-    start_waiting_for_server(rec_server);
+    start_waiting_for_server(rec_client);
     msgsnd(rec_server, &msg, sizeof(msg), 0);
   }
 }
@@ -602,7 +609,7 @@ void whisper_request(){
 // BROADCAST WHISPER
 void broadcast_whisper(){
   TEXT_MESSAGE msg;
-  int result = msgrcv(my_server, &msg, sizeof(msg), PUBLIC, IPC_NOWAIT);
+  int result = msgrcv(my_server, &msg, sizeof(msg), PRIVATE, IPC_NOWAIT);
   if(result == -1) return;
 
   int server_to_respond = msg.from_id;
@@ -610,7 +617,9 @@ void broadcast_whisper(){
 
   STATUS_RESPONSE res;
   res.type = STATUS;
-  res.status = my_server;
+  res.status = my_client;
+
+  printf("I SENT :( %d -> %d\n", server_to_respond, res.status);
 
   msgsnd(server_to_respond, &res, sizeof(res), 0);
 }
@@ -714,6 +723,14 @@ void remove_server_with_server_id(int id){
       if(repo->servers[i].server_msgid == id)  {
         msgctl(repo->servers[i].client_msgid, IPC_RMID, 0);
         msgctl(id, IPC_RMID, 0);
+
+
+        REP(j, repo->active_clients)
+          if( repo->clients[i].server_id == repo->servers[i].client_msgid){
+            logout_user(repo->clients[i].name);
+            j = -1;
+          }
+
         repo->servers[i].client_msgid = INF;
         break;
       }

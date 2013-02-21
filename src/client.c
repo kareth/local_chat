@@ -6,6 +6,8 @@ int pids[200], pc, my_queue;
 int client_repo, sem;
 CLIENT *my_info;
 
+char color_red[30], color_green[30], color_blue[30],color_yellow[30], color_white[30], color_crystal[30];
+
 
 void semP(int id){
   struct sembuf buf;
@@ -53,16 +55,16 @@ int request_login(STATUS_RESPONSE *status, char * login, int server){
   STATUS_RESPONSE res;
   msgrcv(my_queue, &res, sizeof(res), STATUS, 0);
 
-  strcpy(my_login, login);
-  my_server = server;
 
-  printf("%s\n",my_login);
-
+  if(res.status == 201){
   info_on();
+    strcpy(my_login, login);
+    my_server = server;
+
     strcpy(my_info->name, my_login);
     my_info->server_id = my_server;
-    printf("SETUP %s %d\n",my_info->name, my_info->server_id);
   info_off();
+  }
 
   *status = res;
   return 0;
@@ -188,7 +190,7 @@ void wait_for_public(){
   while (1) {
     int res = msgrcv(my_queue, &msg, sizeof(msg), PUBLIC, 0);
     if(res == -1) break; // prevent loop on ctrlC
-    printf("\"%s\"@%s:%s\n", msg.from_name, ctime(&msg.time), msg.text);
+    printf("%s\n> [%s @ %s] '%s'\n\n", color_crystal, msg.from_name, ctime(&msg.time), msg.text);
   }
 }
 
@@ -257,7 +259,17 @@ void init_client_memo(){
   info_off();
 }
 
+void init_colors(){
+  strcpy(color_red, "\033[22;31m");
+  strcpy(color_green, "\033[22;32m");
+  strcpy(color_blue, "\033[22;36m");
+  strcpy(color_yellow, "\033[01;33m");
+  strcpy(color_white, "\033[22;37m");
+  strcpy(color_crystal, "\033[01;37m");
+}
+
 int main() {
+  init_colors();
   srand(time(0));
   signal(SIGINT, close_client);
   signal(SIGTERM, close_client);
@@ -275,7 +287,6 @@ int main() {
     char command[3000];
 
     while(1){
-      //printf("> ");
       scanf("%s",command);
       gets(input);
       if( command[0] == '/') handle_command(command, input);
@@ -307,19 +318,25 @@ void handle_command(char * cd, char * in){
 }
 
 void handle_send_msg(char * input){
-  send_message(input);
+  if(my_server == INF)
+    printf("%s \n> Sign in to send message!\n\n%s", color_red, color_white);
+  else
+    send_message(input);
+
+  printf("\n%s", color_white);
 }
 
 int handle_server_list(){
   SERVER_LIST_RESPONSE servers;
   if( request_server_list(&servers) == -1){
-    printf("No servers up.\n");
+    printf("%s \n> No servers up.\n\n", color_red);
     return -1;
   }
   else{
-    printf("Active servers: %d\n", servers.active_servers);
+    printf("%s \n> Active servers: %d\n", color_blue, servers.active_servers);
     REP(i, servers.active_servers)
-      printf("Server %d: %d users online\n", servers.servers[i], servers.clients_on_servers[i]);
+      printf("%s> - Server %d: %d users online\n ", color_blue, servers.servers[i], servers.clients_on_servers[i]);
+    printf("\n%s", color_white);
   }
   return 1;
 }
@@ -330,38 +347,42 @@ void handle_whisper(char * input){
   memmove(input, input+strlen(target)+2, strlen(input));
 
   send_whisper(target, input);
+  printf("\n%s", color_white);
 }
 
 void handle_global_client_list(){
   GLOBAL_CLIENT_LIST_RESPONSE users;
   request_all_users(&users);
-  printf("All active users: %d\n", users.active_clients);
+  printf("%s \n> All active users: %d\n", color_blue, users.active_clients);
   REP(i, users.active_clients){
-    printf("user '%s'\n", users.names[i]);
+    printf("%s> - user: '%s'\n", color_blue, users.names[i]);
   }
+  printf("\n%s", color_white);
 }
 
 
 void handle_room_client_list(){
   ROOM_CLIENT_LIST_RESPONSE users;
   request_users_here(&users);
-  printf("Active users on this channel: %d\n", users.active_clients);
+  printf("%s \n> Active users on this channel: %d\n", color_blue, users.active_clients);
   REP(i, users.active_clients){
-    printf("user '%s'\n", users.names[i]);
+    printf("%s> - user '%s'\n", color_blue, users.names[i]);
   }
+  printf("\n%s", color_white);
 }
 
 
 void handle_room_list(){
   ROOM_LIST_RESPONSE rooms;
   if( request_room_list(&rooms) == -1)
-    printf("Your server is dead bro...\n");
+    printf("%s \n> Your server is dead bro...\n", color_red);
   else{
-    printf("Active rooms: %d\n", rooms.active_rooms);
+    printf("%s \n> Active rooms: %d\n",color_blue, rooms.active_rooms);
     REP(i, rooms.active_rooms){
-      printf("  room: [%s] - %d users\n", rooms.rooms[i].name, rooms.rooms[i].clients);
+      printf("%s> - room: [%s] - %d users\n", color_blue, rooms.rooms[i].name, rooms.rooms[i].clients);
     }
   }
+  printf("\n%s", color_white);
 }
 
 
@@ -372,15 +393,17 @@ void handle_join(char * input){
   STATUS_RESPONSE status;
   request_join_room(&status, channel);
   if( status.status == 202)
-    printf("Welcome to the '%s' channel!\n", channel);
+    printf("%s\n> Welcome to the '%s' channel!\n",color_green, channel);
+  printf("\n%s", color_white);
 }
 
 
 void handle_logout(){
   if( request_logout() == -1)
-    printf("You are not signed in you fuckard\n");
+    printf("%s\n> You are not signed in!\n\n", color_red);
   else
-    printf("Goodbye, %s ;(\n", my_login);
+    printf("%s\n> Goodbye, %s ;(\n", color_green, my_login);
+  printf("\n%s", color_white);
 }
 
 
@@ -391,34 +414,37 @@ void handle_login(char * input){
 
   STATUS_RESPONSE status;
   if( request_login(&status, login, server) == -1)
-    printf("Im sorry, there is no server with id %d\n", server);
+    printf("%s\n> Im sorry, there is no server with id %d\n", color_red, server);
   else{
     if(status.status == 503)
-      printf("Im sorry, server is full\n");
+      printf("%s\n> Im sorry, server is full\n", color_red);
     if(status.status == 409)
-      printf("Im sorry, user with username '%s', already exists\n", login);
+      printf("%s\n> Im sorry, user with username '%s', already exists\n", color_red, login);
     if(status.status == 201){
-      printf("Successfully logged in as '%s'\n", login);
+      printf("%s\n> Successfully logged in as '%s'\n", color_green, login);
     }
   }
+  printf("\n%s", color_white);
 }
 
 void handle_unknown(){
-  printf("Unknown command, try /help to see all commands\n");
+  printf("%s\n> Unknown command, try /help to see all commands\n", color_yellow);
+  printf("\n%s", color_white);
 }
 
 void handle_help(){
-  printf("Commands list:\n");
-  printf("   /help  - show help\n");
-  printf("   /server_list  - show server list\n");
-  printf("   /client_list  - show client list\n");
-  printf("   /login <LOGIN> <SERVER> - do login\n");
-  printf("   /logout  - do logout\n");
-  printf("   /exit  - exit chat\n");
+  printf("%s\n> Commands list:\n", color_blue);
+  printf("%s>   /help  - show help\n", color_blue);
+  printf("%s>   /server_list  - show server list\n", color_blue);
+  printf("%s>   /client_list  - show client list\n", color_blue);
+  printf("%s>   /login <LOGIN> <SERVER> - do login\n", color_blue);
+  printf("%s>   /logout  - do logout\n", color_blue);
+  printf("%s>   /exit  - exit chat\n", color_blue);
+  printf("\n%s", color_white);
 }
 
 void handle_exit(){
-  printf("Exiting...\n");
+  printf("%s\n> Exiting...\n\n", color_green);
   close_client();
   exit(1);
 }
