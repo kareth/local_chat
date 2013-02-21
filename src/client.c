@@ -2,7 +2,7 @@
 
 int my_server;
 char my_login[2000];
-int pids[200], my_queue;
+int pids[200], pc, my_queue;
 
 // REQUESTS
 
@@ -11,17 +11,15 @@ int pids[200], my_queue;
 int request_server_list(SERVER_LIST_RESPONSE *servers){
   int list_id = msgget(SERVER_LIST_MSG_KEY, 0666);
   if( list_id == -1) return -1;
-  int my_id = msgget(my_queue, 0666 | IPC_CREAT);
 
   SERVER_LIST_REQUEST req;
   req.type = SERVER_LIST;
   req.client_msgid = my_queue;
 
   msgsnd(list_id, &req, sizeof(req), 0);
-  my_id = msgget(my_queue, 0666 | IPC_CREAT);
 
   SERVER_LIST_RESPONSE res;
-  msgrcv(my_id, &res, sizeof(res), SERVER_LIST, 0);
+  msgrcv(my_queue, &res, sizeof(res), SERVER_LIST, 0);
 
   *servers = res;
   return 0;
@@ -29,19 +27,16 @@ int request_server_list(SERVER_LIST_RESPONSE *servers){
 
 // LOGIN
 int request_login(STATUS_RESPONSE *status, char * login, int server){
-  int server_id = msgget(server, 0666);
-  if( server_id == -1) return -1;
-  int my_id = msgget(my_queue, 0666 | IPC_CREAT);
-
   CLIENT_REQUEST req;
   req.type = LOGIN;
   req.client_msgid = my_queue;
   strcpy(req.client_name, login);
 
-  msgsnd(server_id, &req, sizeof(req), 0);
+  msgsnd(server, &req, sizeof(req), 0);
 
   STATUS_RESPONSE res;
-  msgrcv(my_id, &res, sizeof(res), STATUS, 0);
+  printf("wait_on: %d\n", my_queue);
+  if ( msgrcv(my_queue, &res, sizeof(res), STATUS, 0) == -1) perror("error");
 
   *status = res;
   return 0;
@@ -49,15 +44,13 @@ int request_login(STATUS_RESPONSE *status, char * login, int server){
 
 // LOGOUT
 int request_logout(){
-  int server_id = msgget(my_server, 0666);
-  if( server_id == -1) return -1;
 
   CLIENT_REQUEST req;
   req.type = LOGOUT;
   req.client_msgid = my_queue;
   strcpy(req.client_name, my_login);
 
-  msgsnd(server_id, &req, sizeof(req), 0);
+  msgsnd(my_server, &req, sizeof(req), 0);
 
   my_server = INF;
   return 0;
@@ -65,10 +58,6 @@ int request_logout(){
 
 // JOIN ROOM
 int request_join_room(STATUS_RESPONSE *status, char * channel){
-  int server_id = msgget(my_server, 0666);
-  if( server_id == -1) return -1;
-
-  int my_id = msgget(my_queue, 0666 | IPC_CREAT);
 
   CHANGE_ROOM_REQUEST req;
   req.type = CHANGE_ROOM;
@@ -76,10 +65,10 @@ int request_join_room(STATUS_RESPONSE *status, char * channel){
   strcpy(req.room_name, channel);
   strcpy(req.client_name, my_login);
 
-  msgsnd(server_id, &req, sizeof(req), 0);
+  msgsnd(my_server, &req, sizeof(req), 0);
 
   STATUS_RESPONSE res;
-  msgrcv(my_id, &res, sizeof(res), STATUS, 0);
+  msgrcv(my_queue, &res, sizeof(res), STATUS, 0);
 
   *status = res;
   return 0;
@@ -88,19 +77,15 @@ int request_join_room(STATUS_RESPONSE *status, char * channel){
 
 // ROOM LIST
 int request_room_list(ROOM_LIST_RESPONSE *list){
-  int server_id = msgget(my_server, 0666);
-  if( server_id == -1) return -1;
-  int my_id = msgget(my_queue, 0666 | IPC_CREAT);
-
   CLIENT_REQUEST req;
   req.type = ROOM_LIST;
   req.client_msgid = my_queue;
   strcpy(req.client_name, my_login);
 
-  msgsnd(server_id, &req, sizeof(req), 0);
+  msgsnd(my_server, &req, sizeof(req), 0);
 
   ROOM_LIST_RESPONSE res;
-  msgrcv(my_id, &res, sizeof(res), ROOM_LIST, 0);
+  msgrcv(my_queue, &res, sizeof(res), ROOM_LIST, 0);
 
   *list = res;
   return 0;
@@ -109,38 +94,30 @@ int request_room_list(ROOM_LIST_RESPONSE *list){
 
 // USERS LIST
 int request_users_here(ROOM_CLIENT_LIST_RESPONSE *users){
-  int server_id = msgget(my_server, 0666);
-  if( server_id == -1) return -1;
-  int my_id = msgget(my_queue, 0666 | IPC_CREAT);
-
   CLIENT_REQUEST req;
   req.type = ROOM_CLIENT_LIST;
   req.client_msgid = my_queue;
   strcpy(req.client_name, my_login);
 
-  msgsnd(server_id, &req, sizeof(req), 0);
+  msgsnd(my_server, &req, sizeof(req), 0);
 
   ROOM_CLIENT_LIST_RESPONSE res;
-  msgrcv(my_id, &res, sizeof(res), ROOM_CLIENT_LIST, 0);
+  msgrcv(my_queue, &res, sizeof(res), ROOM_CLIENT_LIST, 0);
 
   *users = res;
   return 0;
 }
 
 int request_all_users(GLOBAL_CLIENT_LIST_RESPONSE *users){
-  int server_id = msgget(my_server, 0666);
-  if( server_id == -1) return -1;
-  int my_id = msgget(my_queue, 0666 | IPC_CREAT);
-
   CLIENT_REQUEST req;
   req.type = GLOBAL_CLIENT_LIST;
   req.client_msgid = my_queue;
   strcpy(req.client_name, my_login);
 
-  msgsnd(server_id, &req, sizeof(req), 0);
+  msgsnd(my_server, &req, sizeof(req), 0);
 
   GLOBAL_CLIENT_LIST_RESPONSE res;
-  msgrcv(my_id, &res, sizeof(res), GLOBAL_CLIENT_LIST, 0);
+  msgrcv(my_queue, &res, sizeof(res), GLOBAL_CLIENT_LIST, 0);
 
   *users = res;
   return 0;
@@ -148,14 +125,9 @@ int request_all_users(GLOBAL_CLIENT_LIST_RESPONSE *users){
 
 
 
-
 // SEND MESSAGE
 
 int send_message(char * text){
-  int server_id = msgget(my_server, 0666);
-  if( server_id == -1) return -1;
-  printf("sending: %s\n", text);
-
   TEXT_MESSAGE req;
   req.type = PUBLIC;
   req.from_id = my_queue;
@@ -163,24 +135,58 @@ int send_message(char * text){
   strcpy(req.from_name, my_login);
   strcpy(req.text, text);
 
-  msgsnd(server_id, &req, sizeof(req), 0);
+  msgsnd(my_server, &req, sizeof(req), 0);
   return 0;
 }
+
+int send_whisper(char * user, char * text){
+  TEXT_MESSAGE req;
+  req.type = PRIVATE;
+  req.from_id = my_queue;
+  req.time = time(0);
+  strcpy(req.from_name, my_login);
+  strcpy(req.to, user);
+  strcpy(req.text, text);
+
+  msgsnd(my_server, &req, sizeof(req), 0);
+  return 0;
+}
+
 
 
 // Others
 
 void close_client(){
-  int id = msgget(my_queue, 0666);
   request_logout();
-  msgctl(id, IPC_RMID, 0);
+  REP(i, pc)
+    if(pids[i] != 0)
+      kill(pids[i], SIGKILL);
+  msgctl(my_queue, IPC_RMID, 0);
+}
+
+void wait_for_public(){
+  TEXT_MESSAGE msg;
+  while (1) {
+    int res = msgrcv(my_queue, &msg, sizeof(msg), PUBLIC, 0);
+    if(res == -1) break; // prevent loop on ctrlC
+    printf("\"%s\"@%s:%s\n", msg.from_name, ctime(&msg.time), msg.text);
+  }
+}
+
+void wait_for_private(){
+  TEXT_MESSAGE msg;
+  while (1) {
+    int res = msgrcv(my_queue, &msg, sizeof(msg), PRIVATE, 0);
+    if(res == -1) break; // prevent loop on ctrlC
+    printf("WHISP:\"%s\"@%s:%s\n", msg.from_name, ctime(&msg.time), msg.text);
+  }
 }
 
 void handle_command(char * cd, char * in);
 void handle_send_msg(char * in);
 
+int handle_server_list();
 void handle_help();
-void handle_server_list();
 void handle_login(char * input);
 void handle_logout();
 void handle_join();
@@ -192,69 +198,39 @@ void handle_room_client_list();
 void handle_global_client_list();
 
 
-void wait_for_public(){
-    TEXT_MESSAGE text_message;
-    int my_id = msgget(my_queue, 0666 | IPC_CREAT);
-    printf("%d %d\n",my_queue, my_id);
-
-    while (1) {
-        int res = msgrcv(my_id, &text_message, sizeof(text_message), PUBLIC, 0);
-        //int res = msgrcv(my_id, &text_message, sizeof(TEXT_MESSAGE)-sizeof(long), PUBLIC, 0);
-        if( res == -1) break;
-        printf("CLIENT Private message from %s to %s at %s\n", text_message.from_name, text_message.to, ctime(&text_message.time));
-        printf("text: %s\n", text_message.text);
-    }
-}
-
-
-void wait_for_private(){}
 void heartbeat(){}
 
 // MAIN
 
 int main() {
+  srand(time(0));
   signal(SIGINT, close_client);
   signal(SIGTERM, close_client);
 
   my_server = INF;
-  my_queue = getpid();
-  msgget(my_queue, 0666 | IPC_CREAT);
+  my_queue = msgget(IPC_PRIVATE, 0666 | IPC_CREAT);
+  if( handle_server_list() == -1) exit(1);
+  pc = 0;
 
-  SERVER_LIST_RESPONSE servers;
-  if( request_server_list(&servers) == -1){
-    printf("No servers, sorry\n");
-    exit(1);
-  }
-  else{
-    printf("Active servers: %d\n", servers.active_servers);
-    REP(i, servers.active_servers)
-      printf("Server %d: %d users online\n", servers.servers[i], servers.clients_on_servers[i]);
-  }
-
-  int pc = 0;
-
-  if((pids[pc++] = fork()) == 0){
+  if((pids[pc++] = fork()) == 0)
     wait_for_public();
-  }
-  else if ((pids[pc++] = fork()) == 0){
+  else if ((pids[pc++] = fork()) == 0)
     wait_for_private();
-  }
-  else if ((pids[pc++] = fork()) == 0){
+  else if ((pids[pc++] = fork()) == 0)
     heartbeat();
-  }
   else{
     char input[3000];
     char command[3000];
 
     while(1){
-      printf("> ");
+      //printf("> ");
       scanf("%s",command);
       gets(input);
       if( command[0] == '/') handle_command(command, input);
       else handle_send_msg( strcat(command, input));
     }
+    close_client();
   }
-  close_client();
   return 0;
 }
 
@@ -282,23 +258,26 @@ void handle_send_msg(char * input){
   send_message(input);
 }
 
-void handle_server_list(){
+int handle_server_list(){
   SERVER_LIST_RESPONSE servers;
-  if( request_server_list(&servers) == -1)
+  if( request_server_list(&servers) == -1){
     printf("No servers up.\n");
+    return -1;
+  }
   else{
     printf("Active servers: %d\n", servers.active_servers);
     REP(i, servers.active_servers)
       printf("Server %d: %d users online\n", servers.servers[i], servers.clients_on_servers[i]);
   }
+  return 1;
 }
 
 void handle_whisper(char * input){
   char target[2000];
-  sscanf(target, "%*s %s", target);
-  printf("whole: %s\n", input);
-  memmove(input, input+strlen(target)+1, strlen(input));
-  printf("target: '%s' , content: '%s' \n", target, input);
+  sscanf(input, "%s", target);
+  memmove(input, input+strlen(target)+2, strlen(input));
+
+  send_whisper(target, input);
 }
 
 void handle_global_client_list(){
@@ -374,8 +353,6 @@ void handle_login(char * input){
   }
 }
 
-
-
 void handle_unknown(){
   printf("Unknown command, try /help to see all commands\n");
 }
@@ -392,5 +369,6 @@ void handle_help(){
 
 void handle_exit(){
   printf("Exiting...\n");
+  close_client();
   exit(1);
 }

@@ -4,6 +4,7 @@ int rid, rsem, lsem;
 int mc, ms;
 REPO *repo;
 
+int my_server, my_client;
 
 char user_name[50][50];
 int user_msg[50];
@@ -88,21 +89,16 @@ int comp_r(const void *a, const void *b){
 void register_server(){
   srand(time(0));
   repo_on();
-  mc = getpid();
-  ms = rand()%2000000009;
-  printf("server_Q: %d\n", ms);
+  my_client = rand()%2000000009;
+  my_server = rand()%2000000009;
+  printf("server_Q: %d\n", my_server);
 
-  msgget(getpid(), 0666 | IPC_CREAT);
-  msgget(ms, 0666 | IPC_CREAT);
+  my_client = msgget(my_client, 0666 | IPC_CREAT);
+  my_server = msgget(my_server, 0666 | IPC_CREAT);
   msgget(SERVER_LIST_MSG_KEY, 0666 | IPC_CREAT);
 
-  SERVER clean;
-  clean.client_msgid = getpid();
-  clean.server_msgid = ms;
-  clean.clients = 0;
-
-  repo->servers[repo->active_servers].client_msgid = mc;
-  repo->servers[repo->active_servers].server_msgid = ms;
+  repo->servers[repo->active_servers].client_msgid = my_client;
+  repo->servers[repo->active_servers].server_msgid = my_server;
   repo->servers[repo->active_servers].clients = 0;
 
   repo->active_servers++;
@@ -199,6 +195,8 @@ void close_repo(){
 
 void close_server(){
   close_repo();
+  msgctl(my_client, IPC_RMID, 0);
+  msgctl(my_server, IPC_RMID, 0);
   exit(1);
 }
 
@@ -221,8 +219,7 @@ void server_list_request() {
     res.servers[i] = repo->servers[i].client_msgid;
     res.clients_on_servers[i] = repo->servers[i].clients;
   }
-  int client_id = msgget(req.client_msgid, 0666);
-  msgsnd(client_id, &res, sizeof(res), 0);
+  msgsnd(req.client_msgid, &res, sizeof(res), 0);
 }
 
 
@@ -230,7 +227,7 @@ void server_list_request() {
 // LOGIN
 int validate_user(char * login){
   REP(i, repo->active_servers)
-    if( repo->servers[i].client_msgid == mc){
+    if( repo->servers[i].client_msgid == my_client){
       if( repo->servers[i].clients == SERVER_CAPACITY) return 503;
       else break;
     }
@@ -244,8 +241,7 @@ int validate_user(char * login){
 
 void login_request() {
   CLIENT_REQUEST req;
-  int my_id = msgget(getpid(), 0666 | IPC_CREAT);
-  int result = msgrcv(my_id, &req, sizeof(req), LOGIN, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(req), LOGIN, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: LOGIN (%s)\n", req.client_name);
@@ -271,7 +267,7 @@ void login_request() {
     }
 
     strcpy(repo->clients[repo->active_clients].name, req.client_name);
-    repo->clients[repo->active_clients].server_id = mc;
+    repo->clients[repo->active_clients].server_id = my_client;
     strcpy(repo->clients[repo->active_clients].room, "");
 
     repo->active_clients++;
@@ -286,8 +282,8 @@ void login_request() {
     printf("user: '%s', '%d', '%s' \n",repo->clients[i].name, repo->clients[i].server_id, repo->clients[i].room);
   }
 
-  int client_id = msgget(req.client_msgid, 0666);
-  msgsnd(client_id, &res, sizeof(res), 0);
+  printf("answer_to: %d\n", req.client_msgid);
+  msgsnd(req.client_msgid, &res, sizeof(res), 0);
   return;
 }
 
@@ -296,8 +292,7 @@ void login_request() {
 // LOGOUT
 void logout_request() {
   CLIENT_REQUEST req;
-  int my_id = msgget(getpid(), 0666 | IPC_CREAT);
-  int result = msgrcv(my_id, &req, sizeof(req), LOGOUT, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(req), LOGOUT, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: LOGOUT (%s)\n", req.client_name);
@@ -321,8 +316,7 @@ void logout_request() {
 // JOIN ROOM
 void join_room_request() {
   CHANGE_ROOM_REQUEST req;
-  int my_id = msgget(getpid(), 0666 | IPC_CREAT);
-  int result = msgrcv(my_id, &req, sizeof(req), CHANGE_ROOM, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(req), CHANGE_ROOM, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: CHANGE_ROOM (%s) -> (%s)\n", req.client_name, req.room_name);
@@ -364,8 +358,7 @@ void join_room_request() {
   res.type = STATUS;
   res.status = 202;
 
-  int client_id = msgget(req.client_msgid, 0666);
-  msgsnd(client_id, &res, sizeof(res), 0);
+  msgsnd(req.client_msgid, &res, sizeof(res), 0);
 
   return;
 }
@@ -375,8 +368,7 @@ void join_room_request() {
 
 void room_list_request() {
   CLIENT_REQUEST req;
-  int my_id = msgget(getpid(), 0666 | IPC_CREAT);
-  int result = msgrcv(my_id, &req, sizeof(req), ROOM_LIST, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(req), ROOM_LIST, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: ROOM_LIST\n");
@@ -395,16 +387,14 @@ void room_list_request() {
 
   repo_off();
 
-  int client_id = msgget(req.client_msgid, 0666);
-  msgsnd(client_id, &res, sizeof(res), 0);
+  msgsnd(req.client_msgid, &res, sizeof(res), 0);
 }
 
 // GLOBAL USERS LIST
 //
 void all_users_request(){
   CLIENT_REQUEST req;
-  int my_id = msgget(getpid(), 0666 | IPC_CREAT);
-  int result = msgrcv(my_id, &req, sizeof(req), GLOBAL_CLIENT_LIST, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(req), GLOBAL_CLIENT_LIST, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: GLOBAL_USERS_LIST\n");
@@ -420,16 +410,14 @@ void all_users_request(){
 
   repo_off();
 
-  int client_id = msgget(req.client_msgid, 0666);
-  msgsnd(client_id, &res, sizeof(res), 0);
+  msgsnd(req.client_msgid, &res, sizeof(res), 0);
 }
 
 // ROOM USERS LIST
 
 void users_here_request(){
   CLIENT_REQUEST req;
-  int my_id = msgget(getpid(), 0666 | IPC_CREAT);
-  int result = msgrcv(my_id, &req, sizeof(req), ROOM_CLIENT_LIST, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(req), ROOM_CLIENT_LIST, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: ROOM_USERS_LIST\n");
@@ -458,20 +446,18 @@ void users_here_request(){
 
   repo_off();
 
-  int client_id = msgget(req.client_msgid, 0666);
-  msgsnd(client_id, &res, sizeof(res), 0);
+  msgsnd(req.client_msgid, &res, sizeof(res), 0);
 }
 
 // MESSAGE
 
 void message_request(){
   TEXT_MESSAGE msg;
-  int my_id = msgget(getpid(), 0666 | IPC_CREAT);
-  int result = msgrcv(my_id, &msg, sizeof(msg), PUBLIC, IPC_NOWAIT);
+  int result = msgrcv(my_client, &msg, sizeof(msg), PUBLIC, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: PUBLIC MSG\n");
-  msg.from_id = ms;
+  msg.from_id = my_server;
 
   int servers[30], servers_count;
   repo_on();
@@ -481,27 +467,28 @@ void message_request(){
   repo_off();
 
   REP(j, servers_count){
-    int server_id = msgget(servers[j], 0666);
-    //if( fork() == 0){
+    if( fork() != 0){
       printf("Sending msg '%s' to server %d\n",msg.text, servers[j]);
-      msgsnd(server_id, &msg, sizeof(msg), 0);
-    //}
-    //else{
-      //STATUS_RESPONSE res;
-      //msgrcv(server_id, &res, sizeof(res), STATUS, 0);
+      msgsnd(servers[j], &msg, sizeof(msg), 0);
+    }
+    else{
+      STATUS_RESPONSE res;
+      msgrcv(my_server, &res, sizeof(res), STATUS, 0);
       printf("STATUS RECEIVED\n");
-    //}
+      exit(1);
+    }
   }
   return;
 }
 
 void broadcast_message(){
   TEXT_MESSAGE msg;
-  int server_id = msgget(ms, 0666 | IPC_CREAT);
-  int result = msgrcv(server_id, &msg, sizeof(msg), PUBLIC, IPC_NOWAIT);
+  int result = msgrcv(my_server, &msg, sizeof(msg), PUBLIC, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("BROADCAST: \n");
+
+  int server_to_respond = msg.from_id;
 
   msg.from_id = 0;
   msg.type = PUBLIC;
@@ -516,11 +503,10 @@ void broadcast_message(){
   printf("room: '%s'\n",room);
   REP(j, repo->active_clients){
     printf("client servered to: %s %d %s\n",repo->clients[j].name, repo->clients[j].server_id, repo->clients[j].room);
-    if( repo->clients[j].server_id == mc){
+    if( repo->clients[j].server_id == my_client && !strcmp(repo-> clients[j].room, room)){
       printf("sending_to %d - %s\n",get_user_id(repo->clients[j].name), repo->clients[j].name );
-      int x = get_user_id(repo->clients[j].name);
-      int id = msgget( x, 0666);
-      printf("id: %d, x: %d\n",id, x);
+      int id = get_user_id(repo->clients[j].name);
+      printf("id: %d\n",id);
       msgsnd(id, &msg, sizeof(msg), 0);
     }
   }
@@ -529,9 +515,62 @@ void broadcast_message(){
 
   STATUS_RESPONSE res;
   res.type = STATUS;
-  res.status = ms;
+  res.status = my_server;
 
-  msgsnd(server_id, &res, sizeof(res), 0);
+  msgsnd(server_to_respond, &res, sizeof(res), 0);
+}
+
+// WHISPER
+
+void look_for_user(TEXT_MESSAGE msg){
+  if( get_user_id(msg.to) != -1){
+    msg.from_id = 0;
+    msgsnd(get_user_id(msg.to), &msg, sizeof(msg), 0);
+  }
+  else{
+    msg.from_id = my_server;
+    int rec_server;
+    repo_on();
+      REP(i, repo->active_clients)
+        if(!strcmp(repo->clients[i].name, msg.to))
+          rec_server = repo->clients[i].server_id;
+    repo_off();
+
+    if( fork() != 0){
+      msgsnd(rec_server, &msg, sizeof(msg), 0);
+    }
+    else{
+      STATUS_RESPONSE res;
+      msgrcv(my_server, &res, sizeof(res), STATUS, 0);
+      exit(1);
+    }
+  }
+}
+
+void whisper_request(){
+  TEXT_MESSAGE msg;
+  int result = msgrcv(my_client, &msg, sizeof(msg), PRIVATE, IPC_NOWAIT);
+  if(result == -1) return;
+
+  printf("request: PRIVATE MSG\n");
+
+  look_for_user(msg);
+  return;
+}
+
+void broadcast_whisper(){
+  TEXT_MESSAGE msg;
+  int result = msgrcv(my_server, &msg, sizeof(msg), PUBLIC, IPC_NOWAIT);
+  if(result == -1) return;
+
+  int server_to_respond = msg.from_id;
+  look_for_user(msg);
+
+  STATUS_RESPONSE res;
+  res.type = STATUS;
+  res.status = my_server;
+
+  msgsnd(server_to_respond, &res, sizeof(res), 0);
 }
 
 // MAIN
@@ -560,6 +599,8 @@ int main() {
     users_here_request();
     message_request();
     broadcast_message();
+    whisper_request();
+    broadcast_whisper();
   }
 
   close_repo();
