@@ -4,7 +4,7 @@ int rid, rsem, lsem;
 int mc, ms;
 REPO *repo;
 
-time_t start_time;
+time_t start_time, server_start_time;
 
 int my_server, my_client;
 
@@ -19,6 +19,8 @@ void add_local_user(char * name, int id){
   user_timeout[user_count] = 0;
   user_count++;
 }
+
+void remove_server_with_server_id(int id);
 
 void remove_local_user(char * name){
   REP(i, user_count)
@@ -47,6 +49,73 @@ void reset_timeout(char * name){
     if( !strcmp(user_name[i], name))
       user_timeout[i] = 0;
 }
+
+// ----------
+//
+//
+
+int server_count;
+int server_waiting_count[1000];
+int server_ids[1000];
+int server_times[1000][1000];
+
+void remove_row(int index){
+  server_count--;
+  if( index == server_count) return;
+  server_ids[index] = server_ids[server_count];
+  server_waiting_count[index] = server_waiting_count[server_count];
+  REP(i, server_waiting_count[index])
+    server_times[index][i] = server_times[server_count][i];
+}
+
+void server_responded(int id){
+  printf("*** responded: %d\n", id);
+  REP(i, server_count)
+    if( server_ids[i] == id){
+      server_waiting_count[i]--;
+      if( server_waiting_count[i] == 0)
+        remove_row(i);
+      else{
+        REP(j, server_waiting_count[i])
+          server_times[i][j] = server_times[i][j+1];
+      }
+    }
+}
+void increase_server_times(){
+  REP(i, server_count){
+    REP(j, server_waiting_count[i])
+      server_times[i][j]++;
+  }
+}
+
+void kill_zombie(int id){
+  printf("*** KILL DAT NIAB HAHAHAHAHA : %d\n", id);
+  remove_server_with_server_id(id);
+}
+
+void kill_dead_servers(){
+  REP(i, server_count){
+    if(server_times[i][0] > TIMEOUT){
+      kill_zombie(server_ids[i]);
+      remove_row(i);
+    }
+  }
+}
+
+void start_waiting_for_server(int id){
+  printf("*** start waiting: %d\n",id);
+  REP(i, server_count)
+    if( server_ids[i] == id){
+      server_times[i][server_waiting_count[i]] = 0;
+      server_waiting_count[i]++;
+      return;
+    }
+  server_waiting_count[server_count]=1;
+  server_ids[server_count] = id;
+  server_times[server_count][0] = 0;
+  server_count++;
+}
+
 
 void semP(int id){
   struct sembuf buf;
@@ -162,6 +231,7 @@ void fetch_repo(){
   repo_off();
 }
 
+
 void close_repo(){
   repo_on();
   logger("DOWN: %d\n", getpid());
@@ -173,30 +243,26 @@ void close_repo(){
     int list_id = msgget(SERVER_LIST_MSG_KEY, 0666);
     int repo_id = shmget(ID_REPO, sizeof(REPO), 0666);
 
+    msgctl(my_client, IPC_RMID, 0);
+    msgctl(my_server, IPC_RMID, 0);
+
     msgctl(list_id, IPC_RMID, 0);
     semctl(rsem, IPC_RMID, 0);
     semctl(lsem, IPC_RMID, 0);
     shmctl(repo_id, IPC_RMID, 0);
   } else {
-    repo->active_servers--;
+    repo_off();
 
-    REP(i, MAX_SERVER_NUM){
-      if(repo->servers[i].client_msgid == getpid())  {
-        repo->servers[i].client_msgid = INF;
-        break;
-      }
-    }
+    remove_server_with_server_id(my_server);
 
-    qsort(repo->servers, MAX_SERVER_NUM, sizeof(SERVER), comp_s);
-    shmdt(repo);
+    repo_on();
+      shmdt(repo);
     repo_off();
   }
 }
 
 void close_server(){
   close_repo();
-  msgctl(my_client, IPC_RMID, 0);
-  msgctl(my_server, IPC_RMID, 0);
   exit(1);
 }
 
@@ -465,15 +531,8 @@ void message_request(){
   repo_off();
 
   REP(j, servers_count){
-    if( fork() != 0){
-      msgsnd(servers[j], &msg, sizeof(msg), 0);
-    }
-    else{
-      STATUS_RESPONSE res;
-      int feedback = msgrcv(my_server, &res, sizeof(res), STATUS, IPC_NOWAIT);
-      //if( feedback == -1) kill_dead_server()
-      exit(1);
-    }
+    start_waiting_for_server(servers[j]);
+    msgsnd(servers[j], &msg, sizeof(msg), 0);
   }
   return;
 }
@@ -524,14 +583,8 @@ void look_for_user(TEXT_MESSAGE msg){
           rec_server = repo->clients[i].server_id;
     repo_off();
 
-    if( fork() != 0){
-      msgsnd(rec_server, &msg, sizeof(msg), 0);
-    }
-    else{
-      STATUS_RESPONSE res;
-      msgrcv(my_server, &res, sizeof(res), STATUS, 0);
-      exit(1);
-    }
+    start_waiting_for_server(rec_server);
+    msgsnd(rec_server, &msg, sizeof(msg), 0);
   }
 }
 
@@ -596,10 +649,25 @@ void heartbeat_response(){
   reset_timeout(hb.client_name);
 }
 
+void server_responses(){
+  STATUS_RESPONSE res;
+  int result = msgrcv(my_server, &res, sizeof(res), STATUS, IPC_NOWAIT);
+  if(result == -1) return;
+  server_responded(res.status);
+}
+
+void server_timer(){
+  if( time(0) - server_start_time > HEARTBEAT_TIME){
+    server_start_time = time(0);
+    increase_server_times();
+    kill_dead_servers();// BWAHHAHAHAHAHAHAHAHHAHAHA noobs.
+  }
+}
+
 // MAIN
 int main() {
   repo_init();
-
+  server_start_time = start_time = time(0);
   logger("UP: %d, repo sem: %d log sem: %d repo_id: %d\n", getpid(), rsem, lsem, rid);
 
   repo_off();
@@ -625,8 +693,32 @@ int main() {
     broadcast_whisper();
     heartbeat();
     heartbeat_response();
+    server_responses();
+    server_timer();
   }
 
   close_repo();
   return 0;
+}
+
+
+
+
+
+
+void remove_server_with_server_id(int id){
+    repo_on();
+    repo->active_servers--;
+
+    REP(i, MAX_SERVER_NUM){
+      if(repo->servers[i].server_msgid == id)  {
+        msgctl(repo->servers[i].client_msgid, IPC_RMID, 0);
+        msgctl(id, IPC_RMID, 0);
+        repo->servers[i].client_msgid = INF;
+        break;
+      }
+    }
+
+    qsort(repo->servers, MAX_SERVER_NUM, sizeof(SERVER), comp_s);
+    repo_off();
 }
