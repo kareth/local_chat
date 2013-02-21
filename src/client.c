@@ -35,11 +35,7 @@ int request_server_list(SERVER_LIST_RESPONSE *servers){
   req.client_msgid = my_queue;
 
   msgsnd(list_id, &req, sizeof(req)-sizeof(long), 0);
-
-  SERVER_LIST_RESPONSE res;
-  msgrcv(my_queue, &res, sizeof(res)-sizeof(long), SERVER_LIST, 0);
-
-  *servers = res;
+  msgrcv(my_queue, servers, sizeof(SERVER_LIST_RESPONSE)-sizeof(long), SERVER_LIST, 0);
   return 0;
 }
 
@@ -50,13 +46,11 @@ int request_login(STATUS_RESPONSE *status, char * login, int server){
   req.client_msgid = my_queue;
   strcpy(req.client_name, login);
 
-  msgsnd(server, &req, sizeof(req)-sizeof(long), 0);
+  msgsnd(server, &req, sizeof(CLIENT_REQUEST)-sizeof(long), 0);
 
-  STATUS_RESPONSE res;
-  msgrcv(my_queue, &res, sizeof(res)-sizeof(long), STATUS, 0);
+  msgrcv(my_queue, status, sizeof(STATUS_RESPONSE)-sizeof(long), STATUS, 0);
 
-
-  if(res.status == 201){
+  if(status->status == 201){
   info_on();
     strcpy(my_login, login);
     my_server = server;
@@ -65,8 +59,6 @@ int request_login(STATUS_RESPONSE *status, char * login, int server){
     my_info->server_id = my_server;
   info_off();
   }
-
-  *status = res;
   return 0;
 }
 
@@ -77,9 +69,14 @@ int request_logout(){
   req.client_msgid = my_queue;
   strcpy(req.client_name, my_login);
 
-  msgsnd(my_server, &req, sizeof(req)-sizeof(long), 0);
+  msgsnd(my_server, &req, sizeof(CLIENT_REQUEST)-sizeof(long), 0);
 
-  my_server = INF;
+  info_on();
+    my_server = INF;
+    strcpy(my_login, NONAME);
+    my_info->server_id = INF;
+    strcpy(my_info->name, NONAME);
+  info_off();
   return 0;
 }
 
@@ -91,12 +88,8 @@ int request_join_room(STATUS_RESPONSE *status, char * channel){
   strcpy(req.room_name, channel);
   strcpy(req.client_name, my_login);
 
-  msgsnd(my_server, &req, sizeof(req)-sizeof(long), 0);
-
-  STATUS_RESPONSE res;
-  msgrcv(my_queue, &res, sizeof(res)-sizeof(long), STATUS, 0);
-
-  *status = res;
+  msgsnd(my_server, &req, sizeof(CHANGE_ROOM_REQUEST)-sizeof(long), 0);
+  msgrcv(my_queue, status, sizeof(STATUS_RESPONSE)-sizeof(long), STATUS, 0);
   return 0;
 }
 
@@ -107,12 +100,8 @@ int request_room_list(ROOM_LIST_RESPONSE *list){
   req.client_msgid = my_queue;
   strcpy(req.client_name, my_login);
 
-  msgsnd(my_server, &req, sizeof(req)-sizeof(long), 0);
-
-  ROOM_LIST_RESPONSE res;
-  msgrcv(my_queue, &res, sizeof(res)-sizeof(long), ROOM_LIST, 0);
-
-  *list = res;
+  msgsnd(my_server, &req, sizeof(CLIENT_REQUEST)-sizeof(long), 0);
+  msgrcv(my_queue, list, sizeof(ROOM_LIST_RESPONSE)-sizeof(long), ROOM_LIST, 0);
   return 0;
 }
 
@@ -123,12 +112,8 @@ int request_users_here(ROOM_CLIENT_LIST_RESPONSE *users){
   req.client_msgid = my_queue;
   strcpy(req.client_name, my_login);
 
-  msgsnd(my_server, &req, sizeof(req)-sizeof(long), 0);
-
-  ROOM_CLIENT_LIST_RESPONSE res;
-  msgrcv(my_queue, &res, sizeof(res)-sizeof(long), ROOM_CLIENT_LIST, 0);
-
-  *users = res;
+  msgsnd(my_server, &req, sizeof(CLIENT_REQUEST)-sizeof(long), 0);
+  msgrcv(my_queue, users, sizeof(ROOM_CLIENT_LIST_RESPONSE)-sizeof(long), ROOM_CLIENT_LIST, 0);
   return 0;
 }
 
@@ -139,12 +124,8 @@ int request_all_users(GLOBAL_CLIENT_LIST_RESPONSE *users){
   req.client_msgid = my_queue;
   strcpy(req.client_name, my_login);
 
-  msgsnd(my_server, &req, sizeof(req)-sizeof(long), 0);
-
-  GLOBAL_CLIENT_LIST_RESPONSE res;
-  msgrcv(my_queue, &res, sizeof(res)-sizeof(long), GLOBAL_CLIENT_LIST, 0);
-
-  *users = res;
+  msgsnd(my_server, &req, sizeof(CLIENT_REQUEST)-sizeof(long), 0);
+  msgrcv(my_queue, users, sizeof(GLOBAL_CLIENT_LIST_RESPONSE)-sizeof(long), GLOBAL_CLIENT_LIST, 0);
   return 0;
 }
 
@@ -157,7 +138,7 @@ int send_message(char * text){
   strcpy(req.from_name, my_login);
   strcpy(req.text, text);
 
-  msgsnd(my_server, &req, sizeof(req)-sizeof(long), 0);
+  msgsnd(my_server, &req, sizeof(TEXT_MESSAGE)-sizeof(long), 0);
   return 0;
 }
 
@@ -171,7 +152,7 @@ int send_whisper(char * user, char * text){
   strcpy(req.to, user);
   strcpy(req.text, text);
 
-  msgsnd(my_server, &req, sizeof(req)-sizeof(long), 0);
+  msgsnd(my_server, &req, sizeof(TEXT_MESSAGE)-sizeof(long), 0);
   return 0;
 }
 
@@ -188,7 +169,7 @@ void close_client(){
 void wait_for_public(){
   TEXT_MESSAGE msg;
   while (1) {
-    int res = msgrcv(my_queue, &msg, sizeof(msg)-sizeof(long), PUBLIC, 0);
+    int res = msgrcv(my_queue, &msg, sizeof(TEXT_MESSAGE)-sizeof(long), PUBLIC, 0);
     if(res == -1) break; // prevent loop on ctrlC
     printf("%s\n> [%s @ %s] > '%s'\n\n", color_crystal, msg.from_name, ctime(&msg.time), msg.text);
   }
@@ -197,7 +178,7 @@ void wait_for_public(){
 void wait_for_private(){
   TEXT_MESSAGE msg;
   while (1) {
-    int res = msgrcv(my_queue, &msg, sizeof(msg)-sizeof(long), PRIVATE, 0);
+    int res = msgrcv(my_queue, &msg, sizeof(TEXT_MESSAGE)-sizeof(long), PRIVATE, 0);
     if(res == -1) break; // prevent loop on ctrlC
     printf("%s\n> [%s @ %s] > '%s'\n\n", color_purple, msg.from_name, ctime(&msg.time), msg.text);
   }
@@ -227,7 +208,7 @@ void heartbeat(){
   req.client_msgid = my_queue;
 
   while (1) {
-    int res = msgrcv(my_queue, &hb, sizeof(hb)-sizeof(long), HEARTBEAT, 0);
+    int res = msgrcv(my_queue, &hb, sizeof(STATUS_RESPONSE)-sizeof(long), HEARTBEAT, 0);
     if(res == -1) break; // prevent loop on ctrlC - not sure if necessary here
 
     info_on();
@@ -235,7 +216,7 @@ void heartbeat(){
       strcpy(req.client_name, my_info->name);
     info_off();
 
-    msgsnd(hb.status, &req, sizeof(req)-sizeof(long), 0);
+    msgsnd(hb.status, &req, sizeof(CLIENT_REQUEST)-sizeof(long), 0);
   }
 }
 
@@ -395,6 +376,8 @@ void handle_join(char * input){
   request_join_room(&status, channel);
   if( status.status == 202)
     printf("%s\n> Welcome to the '%s' channel!\n",color_green, channel);
+  else
+    printf("%s\n> something went wrong!\n",color_red);
   printf("\n%s", color_white);
 }
 
@@ -421,6 +404,8 @@ void handle_login(char * input){
       printf("%s\n> Im sorry, server is full\n", color_red);
     if(status.status == 409)
       printf("%s\n> Im sorry, user with username '%s', already exists\n", color_red, login);
+    if(status.status == 400)
+      printf("%s\n> Im sorry, invalid username\n", color_red);
     if(status.status == 201){
       printf("%s\n> Successfully logged in as '%s'\n", color_green, login);
     }
@@ -437,7 +422,8 @@ void handle_help(){
   printf("%s\n> Commands list:\n", color_blue);
   printf("%s>   /help  - show help\n", color_blue);
   printf("%s>   /server_list  - show server list\n", color_blue);
-  printf("%s>   /client_list  - show client list\n", color_blue);
+  printf("%s>   /users_here  - show clients on this channel\n", color_blue);
+  printf("%s>   /all_users  - show all users - on any channel\n", color_blue);
   printf("%s>   /login <LOGIN> <SERVER> - do login\n", color_blue);
   printf("%s>   /logout  - do logout\n", color_blue);
   printf("%s>   /exit  - exit chat\n", color_blue);

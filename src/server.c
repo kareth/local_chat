@@ -278,7 +278,7 @@ void close_server(){
 void server_list_request() {
   SERVER_LIST_REQUEST req;
   int list_id = msgget(SERVER_LIST_MSG_KEY, 0666);
-  int result = msgrcv(list_id, &req, sizeof(req)-sizeof(long), SERVER_LIST, IPC_NOWAIT);
+  int result = msgrcv(list_id, &req, sizeof(SERVER_LIST_REQUEST)-sizeof(long), SERVER_LIST, IPC_NOWAIT);
   if(result == -1) return;
   printf("request: SERVER_LIST\n");
 
@@ -290,11 +290,16 @@ void server_list_request() {
     res.servers[i] = repo->servers[i].client_msgid;
     res.clients_on_servers[i] = repo->servers[i].clients;
   }
-  msgsnd(req.client_msgid, &res, sizeof(res)-sizeof(long), 0);
+  msgsnd(req.client_msgid, &res, sizeof(SERVER_LIST_RESPONSE)-sizeof(long), 0);
 }
 
 // LOGIN
 int validate_user(char * login){
+  if(strlen(login) >= MAX_NAME_SIZE) return 400;
+
+  REP(k, strlen(login))
+    if(! isprint(login[k])) return 400;
+
   REP(i, repo->active_servers)
     if( repo->servers[i].client_msgid == my_client){
       if( repo->servers[i].clients == SERVER_CAPACITY) return 503;
@@ -310,7 +315,7 @@ int validate_user(char * login){
 
 void login_request() {
   CLIENT_REQUEST req;
-  int result = msgrcv(my_client, &req, sizeof(req)-sizeof(long), LOGIN, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(CLIENT_REQUEST)-sizeof(long), LOGIN, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: LOGIN (%s)\n", req.client_name);
@@ -353,7 +358,7 @@ void login_request() {
   }
 
   printf("answer_to: %d\n", req.client_msgid);
-  msgsnd(req.client_msgid, &res, sizeof(res)-sizeof(long), 0);
+  msgsnd(req.client_msgid, &res, sizeof(STATUS_RESPONSE)-sizeof(long), 0);
   return;
 }
 
@@ -363,7 +368,6 @@ void login_request() {
 
 void logout_user(char * name){
   printf("dologout %s\n", name);
-
   logger("LOGGED_OUT@%d: %s\n", my_client, name);
   repo_on();
   REP(i, repo->active_clients)
@@ -379,8 +383,9 @@ void logout_user(char * name){
 
 void logout_request() {
   CLIENT_REQUEST req;
-  int result = msgrcv(my_client, &req, sizeof(req)-sizeof(long), LOGOUT, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(CLIENT_REQUEST)-sizeof(long), LOGOUT, IPC_NOWAIT);
   if(result == -1) return;
+  if( get_user_id(req.client_name) == -1) return; // Uwierzytelnienie
   printf("request: LOGOUT (%s)\n", req.client_name);
   logout_user(req.client_name);
   return;
@@ -389,51 +394,63 @@ void logout_request() {
 // JOIN ROOM
 void join_room_request() {
   CHANGE_ROOM_REQUEST req;
-  int result = msgrcv(my_client, &req, sizeof(req)-sizeof(long), CHANGE_ROOM, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(CHANGE_ROOM_REQUEST)-sizeof(long), CHANGE_ROOM, IPC_NOWAIT);
   if(result == -1) return;
+  if( get_user_id(req.client_name) == -1) return; // Uwierzytelnienie
 
   printf("request: CHANGE_ROOM (%s) -> (%s)\n", req.client_name, req.room_name);
 
   repo_on();
 
-  char old_room[MAX_NAME_SIZE];
-  REP(i, repo->active_clients)
-    if( !strcmp( repo->clients[i].name, req.client_name)){
-      strcpy( old_room, repo->clients[i].room);
-      strcpy( repo->clients[i].room, req.room_name);
-    }
 
-  REP(j, repo->active_rooms)
-    if( !strcmp(repo->rooms[j].name, old_room)){
-      repo->rooms[j].clients--;
-      if( repo->rooms[j].clients == 0){
-        strcpy(repo->rooms[j].name, NONAME);
-        repo->active_rooms--;
-      }
-    }
-
-  int found = 0;
-  REP(k, repo->active_rooms)
-    if( !strcmp(repo->rooms[k].name, req.room_name)){
-      found = 1;
-      repo->rooms[k].clients++;
-    }
-
-  if( found == 0){
-    strcpy(repo->rooms[repo->active_rooms].name, req.room_name);
-    repo->rooms[repo->active_rooms].clients = 1;
-    repo->active_rooms++;
+  int status = 202;
+  if(strlen(req.client_name) >= MAX_NAME_SIZE) status = 400;
+  else {
+    REP(q, strlen(req.client_name))
+      if(! isprint(req.client_name[q]))
+        status = 400;
   }
 
-  qsort(repo->rooms, MAX_CLIENTS, sizeof(ROOM), comp_r);
+  if( status == 202){
+    char old_room[MAX_NAME_SIZE];
+    REP(i, repo->active_clients)
+      if( !strcmp( repo->clients[i].name, req.client_name)){
+        strcpy( old_room, repo->clients[i].room);
+        strcpy( repo->clients[i].room, req.room_name);
+      }
+
+    REP(j, repo->active_rooms)
+      if( !strcmp(repo->rooms[j].name, old_room)){
+        repo->rooms[j].clients--;
+        if( repo->rooms[j].clients == 0){
+          strcpy(repo->rooms[j].name, NONAME);
+          repo->active_rooms--;
+        }
+      }
+
+    int found = 0;
+    REP(k, repo->active_rooms)
+      if( !strcmp(repo->rooms[k].name, req.room_name)){
+        found = 1;
+        repo->rooms[k].clients++;
+      }
+
+    if( found == 0){
+      strcpy(repo->rooms[repo->active_rooms].name, req.room_name);
+      repo->rooms[repo->active_rooms].clients = 1;
+      repo->active_rooms++;
+    }
+
+    qsort(repo->rooms, MAX_CLIENTS, sizeof(ROOM), comp_r);
+  }
 
   repo_off();
 
   STATUS_RESPONSE res;
   res.type = STATUS;
-  res.status = 202;
+  res.status = status;
 
-  msgsnd(req.client_msgid, &res, sizeof(res)-sizeof(long), 0);
+  msgsnd(req.client_msgid, &res, sizeof(STATUS_RESPONSE)-sizeof(long), 0);
 
   return;
 }
@@ -443,8 +460,9 @@ void join_room_request() {
 
 void room_list_request() {
   CLIENT_REQUEST req;
-  int result = msgrcv(my_client, &req, sizeof(req)-sizeof(long), ROOM_LIST, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(CLIENT_REQUEST)-sizeof(long), ROOM_LIST, IPC_NOWAIT);
   if(result == -1) return;
+  if( get_user_id(req.client_name) == -1) return; // Uwierzytelnienie
 
   printf("request: ROOM_LIST\n");
 
@@ -460,15 +478,16 @@ void room_list_request() {
 
   repo_off();
 
-  msgsnd(req.client_msgid, &res, sizeof(res)-sizeof(long), 0);
+  msgsnd(req.client_msgid, &res, sizeof(ROOM_LIST_RESPONSE)-sizeof(long), 0);
 }
 
 // GLOBAL USERS LIST
 //
 void all_users_request(){
   CLIENT_REQUEST req;
-  int result = msgrcv(my_client, &req, sizeof(req)-sizeof(long), GLOBAL_CLIENT_LIST, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(CLIENT_REQUEST)-sizeof(long), GLOBAL_CLIENT_LIST, IPC_NOWAIT);
   if(result == -1) return;
+  if( get_user_id(req.client_name) == -1) return; // Uwierzytelnienie
 
   printf("request: GLOBAL_USERS_LIST\n");
 
@@ -483,15 +502,16 @@ void all_users_request(){
 
   repo_off();
 
-  msgsnd(req.client_msgid, &res, sizeof(res)-sizeof(long), 0);
+  msgsnd(req.client_msgid, &res, sizeof(GLOBAL_CLIENT_LIST_RESPONSE)-sizeof(long), 0);
 }
 
 // ROOM USERS LIST
 
 void users_here_request(){
   CLIENT_REQUEST req;
-  int result = msgrcv(my_client, &req, sizeof(req)-sizeof(long), ROOM_CLIENT_LIST, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(CLIENT_REQUEST)-sizeof(long), ROOM_CLIENT_LIST, IPC_NOWAIT);
   if(result == -1) return;
+  if( get_user_id(req.client_name) == -1) return; // Uwierzytelnienie
 
   printf("request: ROOM_USERS_LIST\n");
 
@@ -507,11 +527,14 @@ void users_here_request(){
       break;
     }
 
+  printf("----user_room: '%s'\n",user_room);
+
   int count = 0;
 
   REP(j, repo->active_clients)
     if( !strcmp(user_room, repo->clients[j].room)){
       strcpy(res.names[i], repo->clients[j].name);
+      printf("----user: '%s'\n",res.names[i]);
       count++;
     }
 
@@ -519,13 +542,13 @@ void users_here_request(){
 
   repo_off();
 
-  msgsnd(req.client_msgid, &res, sizeof(res)-sizeof(long), 0);
+  msgsnd(req.client_msgid, &res, sizeof(ROOM_CLIENT_LIST_RESPONSE)-sizeof(long), 0);
 }
 
 // MESSAGE
 void message_request(){
   TEXT_MESSAGE msg;
-  int result = msgrcv(my_client, &msg, sizeof(msg)-sizeof(long), PUBLIC, IPC_NOWAIT);
+  int result = msgrcv(my_client, &msg, sizeof(TEXT_MESSAGE)-sizeof(long), PUBLIC, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: PUBLIC MSG\n");
@@ -542,7 +565,7 @@ void message_request(){
 
   REP(j, servers_count){
     start_waiting_for_server(client_msgids[j]);
-    msgsnd(server_msgids[j], &msg, sizeof(msg)-sizeof(long), 0);
+    msgsnd(server_msgids[j], &msg, sizeof(TEXT_MESSAGE)-sizeof(long), 0);
   }
   return;
 }
@@ -550,7 +573,7 @@ void message_request(){
 // BROADCAST MESSAGE
 void broadcast_message(){
   TEXT_MESSAGE msg;
-  int result = msgrcv(my_server, &msg, sizeof(msg)-sizeof(long), PUBLIC, IPC_NOWAIT);
+  int result = msgrcv(my_server, &msg, sizeof(TEXT_MESSAGE)-sizeof(long), PUBLIC, IPC_NOWAIT);
   if(result == -1) return;
 
   int server_to_respond = msg.from_id;
@@ -567,7 +590,7 @@ void broadcast_message(){
 
   REP(j, repo->active_clients)
     if( repo->clients[j].server_id == my_client && !strcmp(repo-> clients[j].room, room))
-      msgsnd(get_user_id(repo->clients[j].name), &msg, sizeof(msg)-sizeof(long), 0);
+      msgsnd(get_user_id(repo->clients[j].name), &msg, sizeof(TEXT_MESSAGE)-sizeof(long), 0);
 
   repo_off();
 
@@ -575,21 +598,21 @@ void broadcast_message(){
   res.type = STATUS;
   res.status = my_client;
 
-  msgsnd(server_to_respond, &res, sizeof(res)-sizeof(long), 0);
+  msgsnd(server_to_respond, &res, sizeof(STATUS_RESPONSE)-sizeof(long), 0);
 }
 
 // WHISPER
-void look_for_user(TEXT_MESSAGE msg){
-  if( get_user_id(msg.to) != -1){
-    msg.from_id = 0;
-    msgsnd(get_user_id(msg.to), &msg, sizeof(msg)-sizeof(long), 0);
+void look_for_user(TEXT_MESSAGE *msg){
+  if( get_user_id(msg->to) != -1){
+    msg->from_id = 0;
+    msgsnd(get_user_id(msg->to), msg, sizeof(TEXT_MESSAGE)-sizeof(long), 0);
   }
   else{
-    msg.from_id = my_server;
+    msg->from_id = my_server;
     int rec_server, rec_client;
     repo_on();
       REP(i, repo->active_clients)
-        if(!strcmp(repo->clients[i].name, msg.to))
+        if(!strcmp(repo->clients[i].name, msg->to))
           rec_client = repo->clients[i].server_id;
 
       REP(j, repo->active_servers)
@@ -599,29 +622,29 @@ void look_for_user(TEXT_MESSAGE msg){
     repo_off();
 
     start_waiting_for_server(rec_client);
-    msgsnd(rec_server, &msg, sizeof(msg)-sizeof(long), 0);
+    msgsnd(rec_server, msg, sizeof(TEXT_MESSAGE)-sizeof(long), 0);
   }
 }
 
 void whisper_request(){
   TEXT_MESSAGE msg;
-  int result = msgrcv(my_client, &msg, sizeof(msg)-sizeof(long), PRIVATE, IPC_NOWAIT);
+  int result = msgrcv(my_client, &msg, sizeof(TEXT_MESSAGE)-sizeof(long), PRIVATE, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: PRIVATE MSG\n");
 
-  look_for_user(msg);
+  look_for_user(&msg);
   return;
 }
 
 // BROADCAST WHISPER
 void broadcast_whisper(){
   TEXT_MESSAGE msg;
-  int result = msgrcv(my_server, &msg, sizeof(msg)-sizeof(long), PRIVATE, IPC_NOWAIT);
+  int result = msgrcv(my_server, &msg, sizeof(TEXT_MESSAGE)-sizeof(long), PRIVATE, IPC_NOWAIT);
   if(result == -1) return;
 
   int server_to_respond = msg.from_id;
-  look_for_user(msg);
+  look_for_user(&msg);
 
   STATUS_RESPONSE res;
   res.type = STATUS;
@@ -629,7 +652,7 @@ void broadcast_whisper(){
 
   printf("I SENT :( %d -> %d\n", server_to_respond, res.status);
 
-  msgsnd(server_to_respond, &res, sizeof(res)-sizeof(long), 0);
+  msgsnd(server_to_respond, &res, sizeof(STATUS_RESPONSE)-sizeof(long), 0);
 }
 
 void increase_timeouts(){
@@ -656,20 +679,20 @@ void heartbeat(){
     req.type = HEARTBEAT;
 
     REP(i, user_count)
-      msgsnd(user_msg[i], &req, sizeof(req)-sizeof(long), 0);
+      msgsnd(user_msg[i], &req, sizeof(STATUS_RESPONSE)-sizeof(long), 0);
   }
 }
 
 void heartbeat_response(){
   CLIENT_REQUEST hb;
-  int result = msgrcv(my_client, &hb, sizeof(hb)-sizeof(long), HEARTBEAT, IPC_NOWAIT);
+  int result = msgrcv(my_client, &hb, sizeof(CLIENT_REQUEST)-sizeof(long), HEARTBEAT, IPC_NOWAIT);
   if(result == -1) return;
   reset_timeout(hb.client_name);
 }
 
 void server_responses(){
   STATUS_RESPONSE res;
-  int result = msgrcv(my_server, &res, sizeof(res)-sizeof(long), STATUS, IPC_NOWAIT);
+  int result = msgrcv(my_server, &res, sizeof(STATUS_RESPONSE)-sizeof(long), STATUS, IPC_NOWAIT);
   if(result == -1) return;
   server_responded(res.status);
 }

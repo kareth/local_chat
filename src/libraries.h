@@ -17,6 +17,7 @@
 #include <sys/shm.h>
 #include <signal.h>
 #include <limits.h>
+#include <ctype.h>
 
 #include "common.h"
 
