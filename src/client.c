@@ -89,7 +89,7 @@ int request_join_room(STATUS_RESPONSE *status, char * channel){
   strcpy(req.client_name, my_login);
 
   msgsnd(my_server, &req, sizeof(CHANGE_ROOM_REQUEST)-sizeof(long), 0);
-  msgrcv(my_queue, status, sizeof(STATUS_RESPONSE)-sizeof(long), STATUS, 0);
+  msgrcv(my_queue, status, sizeof(STATUS_RESPONSE)-sizeof(long), CHANGE_ROOM, 0);
   return 0;
 }
 
@@ -173,6 +173,7 @@ void wait_for_public(){
     if(res == -1) break; // prevent loop on ctrlC
     printf("%s\n> [%s @ %s] > '%s'\n\n", color_crystal, msg.from_name, ctime(&msg.time), msg.text);
   }
+  printf("\n%s", color_white);
 }
 
 void wait_for_private(){
@@ -180,8 +181,12 @@ void wait_for_private(){
   while (1) {
     int res = msgrcv(my_queue, &msg, sizeof(TEXT_MESSAGE)-sizeof(long), PRIVATE, 0);
     if(res == -1) break; // prevent loop on ctrlC
-    printf("%s\n> [%s @ %s] > '%s'\n\n", color_purple, msg.from_name, ctime(&msg.time), msg.text);
+    char time[100];
+    sprintf(ctime(&msg.time), "%s\n", ctime(&msg.time));
+    //time[strlen(time)-2]='\0';
+    printf("%s\n> [%s @ %s] > '%s'\n\n", color_purple, msg.from_name, time, msg.text);
   }
+  printf("\n%s", color_white);
 }
 
 void handle_command(char * cd, char * in);
@@ -386,7 +391,7 @@ void handle_logout(){
   if( request_logout() == -1)
     printf("%s\n> You are not signed in!\n\n", color_red);
   else
-    printf("%s\n> Goodbye, %s ;(\n", color_green, my_login);
+    printf("%s\n> Goodbye ;(\n", color_green);
   printf("\n%s", color_white);
 }
 

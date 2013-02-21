@@ -20,7 +20,7 @@ void add_local_user(char * name, int id){
   user_count++;
 }
 
-void remove_server_with_server_id(int id, int zomb);
+void remove_server_with_id(int id, int zomb);
 
 void remove_local_user(char * name){
   REP(i, user_count)
@@ -90,7 +90,7 @@ void increase_server_times(){
 
 void kill_zombie(int id){
   printf("*** KILL DAT NIAB HAHAHAHAHA : %d\n", id);
-  remove_server_with_server_id(id, 1);
+  remove_server_with_id(id, 1);
 }
 
 void kill_dead_servers(){
@@ -135,6 +135,7 @@ void repo_off(){semV(rsem); }
 // Logger
 
 void logger(const char * format, ... ){
+  return; //TODO DBG
   semP(lsem);
   va_list args;
 
@@ -179,7 +180,7 @@ void register_server(){
 
   repo->active_servers++;
 
-  qsort(repo->servers, MAX_SERVER_NUM, sizeof(SERVER), comp_s);
+  qsort(repo->servers, repo->active_servers, sizeof(SERVER), comp_s);
   repo_off();
   logger("ALIVE: %d\n", my_client);
 }
@@ -211,7 +212,7 @@ void rmem_init() {
   clean.active_clients = 0;
   clean.active_rooms = 0;
   clean.active_servers = 0;
-  REP(i, MAX_SERVER_NUM) clean.servers[i].client_msgid = INF;
+  REP(i, MAX_SERVER_NUM) clean.servers[i].client_msgid = 0;
   REP(j, MAX_CLIENTS) strcpy( clean.clients[j].name, NONAME );
   REP(k, MAX_CLIENTS){
     strcpy( clean.rooms[k].name, NONAME );
@@ -258,7 +259,7 @@ void close_repo(){
   } else {
     repo_off();
 
-    remove_server_with_server_id(my_server, 0);
+    remove_server_with_id(my_client, 0);
 
     repo_on();
       shmdt(repo);
@@ -282,14 +283,18 @@ void server_list_request() {
   if(result == -1) return;
   printf("request: SERVER_LIST\n");
 
+  repo_on();
   SERVER_LIST_RESPONSE res;
   res.type = SERVER_LIST;
   res.active_servers = repo->active_servers;
+  printf("S_count: %d\n", res.active_servers);
 
   REP(i, repo->active_servers) {
     res.servers[i] = repo->servers[i].client_msgid;
     res.clients_on_servers[i] = repo->servers[i].clients;
+    printf("server: %d - %d\n",res.servers[i], res.clients_on_servers[i]);
   }
+  repo_off();
   msgsnd(req.client_msgid, &res, sizeof(SERVER_LIST_RESPONSE)-sizeof(long), 0);
 }
 
@@ -341,12 +346,16 @@ void login_request() {
       repo->active_rooms++;
     }
 
+    REP(k, repo->active_servers)
+      if( repo->servers[k].client_msgid == my_client )
+        repo->servers[k].clients++;
+
     strcpy(repo->clients[repo->active_clients].name, req.client_name);
     repo->clients[repo->active_clients].server_id = my_client;
     strcpy(repo->clients[repo->active_clients].room, "");
 
     repo->active_clients++;
-    qsort(repo->clients, MAX_CLIENTS, sizeof(CLIENT), comp_c);
+    qsort(repo->clients, repo->active_clients, sizeof(CLIENT), comp_c);
 
     add_local_user(req.client_name, req.client_msgid);
   }
@@ -366,17 +375,41 @@ void login_request() {
 
 // LOGOUT
 
-void logout_user(char * name){
+void logout_user_without(char * name){
   printf("dologout %s\n", name);
   logger("LOGGED_OUT@%d: %s\n", my_client, name);
-  repo_on();
+
+  char old_room[MAX_NAME_SIZE];
   REP(i, repo->active_clients)
-    if( !strcmp( repo->clients[i].name, name))
+    if( !strcmp( repo->clients[i].name, name)){
+      strcpy( old_room, repo->clients[i].room);
       strcpy( repo->clients[i].name, NONAME);
+    }
+
+    REP(j, repo->active_rooms)
+      if( !strcmp(repo->rooms[j].name, old_room)){
+        repo->rooms[j].clients--;
+        if( repo->rooms[j].clients == 0){
+          strcpy(repo->rooms[j].name, NONAME);
+          qsort(repo->rooms, repo->active_rooms, sizeof(ROOM), comp_r);
+          repo->active_rooms--;
+        }
+      }
+
+
+  REP(k, repo->active_servers)
+    if( repo->servers[k].client_msgid == my_client )
+      repo->servers[k].clients--;
+
+  qsort(repo->clients, repo->active_clients, sizeof(CLIENT), comp_c);
 
   repo->active_clients--;
-  qsort(repo->clients, MAX_CLIENTS, sizeof(CLIENT), comp_c);
   remove_local_user(name);
+}
+
+void logout_user(char * name){
+  repo_on();
+  logout_user_without(name);
   repo_off();
   return;
 }
@@ -424,6 +457,7 @@ void join_room_request() {
         repo->rooms[j].clients--;
         if( repo->rooms[j].clients == 0){
           strcpy(repo->rooms[j].name, NONAME);
+          qsort(repo->rooms, repo->active_rooms, sizeof(ROOM), comp_r);
           repo->active_rooms--;
         }
       }
@@ -439,15 +473,14 @@ void join_room_request() {
       strcpy(repo->rooms[repo->active_rooms].name, req.room_name);
       repo->rooms[repo->active_rooms].clients = 1;
       repo->active_rooms++;
+      qsort(repo->rooms, repo->active_rooms, sizeof(ROOM), comp_r);
     }
-
-    qsort(repo->rooms, MAX_CLIENTS, sizeof(ROOM), comp_r);
   }
 
   repo_off();
 
   STATUS_RESPONSE res;
-  res.type = STATUS;
+  res.type = CHANGE_ROOM;
   res.status = status;
 
   msgsnd(req.client_msgid, &res, sizeof(STATUS_RESPONSE)-sizeof(long), 0);
@@ -550,7 +583,7 @@ void message_request(){
   if(result == -1) return;
 
   printf("request: PUBLIC MSG\n");
-  msg.from_id = my_server;
+  msg.from_id = my_client;
 
   int server_msgids[MAX_SERVER_NUM], client_msgids[MAX_SERVER_NUM], servers_count;
   repo_on();
@@ -559,11 +592,21 @@ void message_request(){
       server_msgids[i] = repo->servers[i].server_msgid;
       client_msgids[i] = repo->servers[i].client_msgid;
     }
+
+    char room[MAX_NAME_SIZE];
+    REP(q, repo->active_clients)
+      if( !strcmp(repo->clients[q].name, msg.from_name))
+        strcpy(room, repo->clients[q].room);
+    REP(j, repo->active_clients)
+      if( repo->clients[j].server_id == my_client && !strcmp(repo-> clients[j].room, room) && strcmp(repo->clients[j].name, msg.from_name))
+        msgsnd(get_user_id(repo->clients[j].name), &msg, sizeof(TEXT_MESSAGE)-sizeof(long), 0);
+
   repo_off();
 
-  REP(j, servers_count){
-    start_waiting_for_server(client_msgids[j]);
-    msgsnd(server_msgids[j], &msg, sizeof(TEXT_MESSAGE)-sizeof(long), 0);
+  REP(k, servers_count){
+    if(client_msgids[k] == my_client) continue;
+    start_waiting_for_server(client_msgids[k]);
+    msgsnd(server_msgids[k], &msg, sizeof(TEXT_MESSAGE)-sizeof(long), 0);
   }
   return;
 }
@@ -587,8 +630,14 @@ void broadcast_message(){
       strcpy(room, repo->clients[i].room);
 
   REP(j, repo->active_clients)
-    if( repo->clients[j].server_id == my_client && !strcmp(repo-> clients[j].room, room))
+    if( repo->clients[j].server_id == my_client && !strcmp(repo-> clients[j].room, room) )
       msgsnd(get_user_id(repo->clients[j].name), &msg, sizeof(TEXT_MESSAGE)-sizeof(long), 0);
+
+  REP(k, repo->active_servers)
+    if( repo->servers[k].client_msgid == server_to_respond){
+      server_to_respond = repo->servers[k].server_msgid;
+      break;
+    }
 
   repo_off();
 
@@ -742,31 +791,33 @@ int main() {
 
 
 
-void remove_server_with_server_id(int id, int zomb){
+void remove_server_with_id(int id, int zomb){
     repo_on();
-    repo->active_servers--;
 
-    REP(i, MAX_SERVER_NUM){
-      if(repo->servers[i].server_msgid == id)  {
-        msgctl(repo->servers[i].client_msgid, IPC_RMID, 0);
+    REP(i, repo->active_servers){
+      if(repo->servers[i].client_msgid == id)  {
+        msgctl(repo->servers[i].server_msgid, IPC_RMID, 0);
         msgctl(id, IPC_RMID, 0);
 
         if(zomb == 1)
-          logger("KILLED_ZOMBIE: %d\n", repo->servers[i].client_msgid);
-        logger("DOWN: %d\n", repo->servers[i].client_msgid);
+          logger("KILLED_ZOMBIE: %d\n", id);
+        logger("DOWN: %d\n", id);
 
 
         REP(j, repo->active_clients)
-          if( repo->clients[i].server_id == repo->servers[i].client_msgid){
-            logout_user(repo->clients[i].name);
+          if( repo->clients[j].server_id == id){
+            logout_user_without(repo->clients[j].name);
             j = -1;
           }
 
         repo->servers[i].client_msgid = INF;
+
+        qsort(repo->servers, repo->active_servers, sizeof(SERVER), comp_s);
+        repo->active_servers--;
+        printf("active_servers now : %d\n", repo->active_servers);
         break;
       }
     }
 
-    qsort(repo->servers, MAX_SERVER_NUM, sizeof(SERVER), comp_s);
     repo_off();
 }

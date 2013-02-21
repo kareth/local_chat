@@ -1,0 +1,56 @@
+IPC LOCAL CHAT
+
+zurkowski.piotr@gmail.com
+
+
+Application consists of 2 main modules - client and server. Each client is connected to exactly one server, but servers can handle many users.
+
+Repository:
+  Shared memory, used to store information on servers, clients, and rooms, across all processes. Accessible via semaphore.
+
+Server:
+  Server uses 2 msg queues:
+    client_msgid - msg queue used to communicate with clients connected to this server.
+    server_msgid - msg queue used to communicate with other servers e.g. in order to pass msg.
+
+  Server is listening to those requests:
+    - Server list
+      This request comes to queue of key SERVER_LIST_MSG_KEY, and any working server can process it.
+      Returns list of available servers with their client ids
+
+    - Login (username, server)
+      Listening on server's client queue. Appends user to list of signed users.
+      
+      
+    - Logout -
+    - Join room - 
+    - Room list- 
+    - Users in room- 
+    - All users - 
+    - Send public msg -
+    - Send private msg - 
+    
+
+
+1. Makefile
+  - make server/client/all - odpowiednio buduje binarki serwera, klienta bądź obie
+  - make clean - usuwa wspólne IPC z systemu
+
+2. Serwer - uruchomić, log w /tmp/czat.log
+  - serwer jednoprocesowy
+  - obsługa komunikatów przy pomocy asynchronicznych komunikatów
+  - współpraca z wieloma serwerami i użytkownikami
+  - sprawdzanie klientów heartbeatami oraz serwerów odpowiednimi statusami
+
+3. Klient - uruchomić, podać nazwę użytkownika, serwer dobiera się automatycznie (wybierany jest najmniej obciążony), chyba, że nazwa jest zajęta, bądź serwer jest pełny
+  - dwa procesy - proces wypisywania na ekran (i odbioru komunikatów), proces odczytujący (i wysyłający komunikaty do serwera)
+  - współpraca z jednym serwerem (serwer rozsyła wiadomości dalej)
+  - dostępne komendy
+    - /rooms - wypisuje pokoje
+    - /users - wypisuje uzytkownikow
+    - /join POKOJ - wchodzi na dany POKOJ
+    - /msg UZYTKOWNIK WIADOMOSC - wysyla priva do UZYTKOWNIKA
+    - /quit - wylogowanie i wylaczenie
+    - zwykla wiadomosc - napisanie wiadomosci i wyslanie do aktualnego kanalu
+
+4. W przypadku problemow z kompatybilnoscia, nalezy sprawdzic zawartosc stalych w common.h
