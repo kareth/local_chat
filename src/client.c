@@ -34,10 +34,10 @@ int request_server_list(SERVER_LIST_RESPONSE *servers){
   req.type = SERVER_LIST;
   req.client_msgid = my_queue;
 
-  msgsnd(list_id, &req, sizeof(req), 0);
+  msgsnd(list_id, &req, sizeof(req)-sizeof(long), 0);
 
   SERVER_LIST_RESPONSE res;
-  msgrcv(my_queue, &res, sizeof(res), SERVER_LIST, 0);
+  msgrcv(my_queue, &res, sizeof(res)-sizeof(long), SERVER_LIST, 0);
 
   *servers = res;
   return 0;
@@ -50,10 +50,10 @@ int request_login(STATUS_RESPONSE *status, char * login, int server){
   req.client_msgid = my_queue;
   strcpy(req.client_name, login);
 
-  msgsnd(server, &req, sizeof(req), 0);
+  msgsnd(server, &req, sizeof(req)-sizeof(long), 0);
 
   STATUS_RESPONSE res;
-  msgrcv(my_queue, &res, sizeof(res), STATUS, 0);
+  msgrcv(my_queue, &res, sizeof(res)-sizeof(long), STATUS, 0);
 
 
   if(res.status == 201){
@@ -77,7 +77,7 @@ int request_logout(){
   req.client_msgid = my_queue;
   strcpy(req.client_name, my_login);
 
-  msgsnd(my_server, &req, sizeof(req), 0);
+  msgsnd(my_server, &req, sizeof(req)-sizeof(long), 0);
 
   my_server = INF;
   return 0;
@@ -91,10 +91,10 @@ int request_join_room(STATUS_RESPONSE *status, char * channel){
   strcpy(req.room_name, channel);
   strcpy(req.client_name, my_login);
 
-  msgsnd(my_server, &req, sizeof(req), 0);
+  msgsnd(my_server, &req, sizeof(req)-sizeof(long), 0);
 
   STATUS_RESPONSE res;
-  msgrcv(my_queue, &res, sizeof(res), STATUS, 0);
+  msgrcv(my_queue, &res, sizeof(res)-sizeof(long), STATUS, 0);
 
   *status = res;
   return 0;
@@ -107,10 +107,10 @@ int request_room_list(ROOM_LIST_RESPONSE *list){
   req.client_msgid = my_queue;
   strcpy(req.client_name, my_login);
 
-  msgsnd(my_server, &req, sizeof(req), 0);
+  msgsnd(my_server, &req, sizeof(req)-sizeof(long), 0);
 
   ROOM_LIST_RESPONSE res;
-  msgrcv(my_queue, &res, sizeof(res), ROOM_LIST, 0);
+  msgrcv(my_queue, &res, sizeof(res)-sizeof(long), ROOM_LIST, 0);
 
   *list = res;
   return 0;
@@ -123,10 +123,10 @@ int request_users_here(ROOM_CLIENT_LIST_RESPONSE *users){
   req.client_msgid = my_queue;
   strcpy(req.client_name, my_login);
 
-  msgsnd(my_server, &req, sizeof(req), 0);
+  msgsnd(my_server, &req, sizeof(req)-sizeof(long), 0);
 
   ROOM_CLIENT_LIST_RESPONSE res;
-  msgrcv(my_queue, &res, sizeof(res), ROOM_CLIENT_LIST, 0);
+  msgrcv(my_queue, &res, sizeof(res)-sizeof(long), ROOM_CLIENT_LIST, 0);
 
   *users = res;
   return 0;
@@ -139,10 +139,10 @@ int request_all_users(GLOBAL_CLIENT_LIST_RESPONSE *users){
   req.client_msgid = my_queue;
   strcpy(req.client_name, my_login);
 
-  msgsnd(my_server, &req, sizeof(req), 0);
+  msgsnd(my_server, &req, sizeof(req)-sizeof(long), 0);
 
   GLOBAL_CLIENT_LIST_RESPONSE res;
-  msgrcv(my_queue, &res, sizeof(res), GLOBAL_CLIENT_LIST, 0);
+  msgrcv(my_queue, &res, sizeof(res)-sizeof(long), GLOBAL_CLIENT_LIST, 0);
 
   *users = res;
   return 0;
@@ -157,7 +157,7 @@ int send_message(char * text){
   strcpy(req.from_name, my_login);
   strcpy(req.text, text);
 
-  msgsnd(my_server, &req, sizeof(req), 0);
+  msgsnd(my_server, &req, sizeof(req)-sizeof(long), 0);
   return 0;
 }
 
@@ -171,7 +171,7 @@ int send_whisper(char * user, char * text){
   strcpy(req.to, user);
   strcpy(req.text, text);
 
-  msgsnd(my_server, &req, sizeof(req), 0);
+  msgsnd(my_server, &req, sizeof(req)-sizeof(long), 0);
   return 0;
 }
 
@@ -188,7 +188,7 @@ void close_client(){
 void wait_for_public(){
   TEXT_MESSAGE msg;
   while (1) {
-    int res = msgrcv(my_queue, &msg, sizeof(msg), PUBLIC, 0);
+    int res = msgrcv(my_queue, &msg, sizeof(msg)-sizeof(long), PUBLIC, 0);
     if(res == -1) break; // prevent loop on ctrlC
     printf("%s\n> [%s @ %s] > '%s'\n\n", color_crystal, msg.from_name, ctime(&msg.time), msg.text);
   }
@@ -197,7 +197,7 @@ void wait_for_public(){
 void wait_for_private(){
   TEXT_MESSAGE msg;
   while (1) {
-    int res = msgrcv(my_queue, &msg, sizeof(msg), PRIVATE, 0);
+    int res = msgrcv(my_queue, &msg, sizeof(msg)-sizeof(long), PRIVATE, 0);
     if(res == -1) break; // prevent loop on ctrlC
     printf("%s\n> [%s @ %s] > '%s'\n\n", color_purple, msg.from_name, ctime(&msg.time), msg.text);
   }
@@ -227,7 +227,7 @@ void heartbeat(){
   req.client_msgid = my_queue;
 
   while (1) {
-    int res = msgrcv(my_queue, &hb, sizeof(hb), HEARTBEAT, 0);
+    int res = msgrcv(my_queue, &hb, sizeof(hb)-sizeof(long), HEARTBEAT, 0);
     if(res == -1) break; // prevent loop on ctrlC - not sure if necessary here
 
     info_on();
@@ -235,7 +235,7 @@ void heartbeat(){
       strcpy(req.client_name, my_info->name);
     info_off();
 
-    msgsnd(hb.status, &req, sizeof(req), 0);
+    msgsnd(hb.status, &req, sizeof(req)-sizeof(long), 0);
   }
 }
 
@@ -445,7 +445,8 @@ void handle_help(){
 }
 
 void handle_exit(){
-  printf("%s\n> Exiting...\n\n", color_green);
+  printf("%s\n> Exiting...\n", color_green);
+  printf("\n%s", color_white);
   close_client();
   exit(1);
 }

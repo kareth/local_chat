@@ -20,7 +20,7 @@ void add_local_user(char * name, int id){
   user_count++;
 }
 
-void remove_server_with_server_id(int id);
+void remove_server_with_server_id(int id, int zomb);
 
 void remove_local_user(char * name){
   REP(i, user_count)
@@ -90,7 +90,7 @@ void increase_server_times(){
 
 void kill_zombie(int id){
   printf("*** KILL DAT NIAB HAHAHAHAHA : %d\n", id);
-  remove_server_with_server_id(id);
+  remove_server_with_server_id(id, 1);
 }
 
 void kill_dead_servers(){
@@ -138,12 +138,14 @@ void logger(const char * format, ... ){
   semP(lsem);
   va_list args;
 
-  //int fd = open("/tmp/czat.log", O_WRONLY|O_CREAT|O_APPEND);
+  FILE *log = fopen(LOG_FILE, "at");
+  if (!log) log = fopen(LOG_FILE, "wt");
+
   va_start(args, format);
-  vprintf(format, args);
+  vfprintf(log, format, args);
   va_end(args);
 
-  //close(fd);
+  fclose(log);
   semV(lsem);
 }
 
@@ -168,6 +170,7 @@ void register_server(){
 
   my_client = msgget(IPC_PRIVATE, 0666 | IPC_CREAT);
   my_server = msgget(IPC_PRIVATE, 0666 | IPC_CREAT);
+  printf("MY INFO: C%d S:%d\n",my_client, my_server);
   msgget(SERVER_LIST_MSG_KEY, 0666 | IPC_CREAT);
 
   repo->servers[repo->active_servers].client_msgid = my_client;
@@ -178,6 +181,7 @@ void register_server(){
 
   qsort(repo->servers, MAX_SERVER_NUM, sizeof(SERVER), comp_s);
   repo_off();
+  logger("ALIVE: %d\n", my_client);
 }
 
 
@@ -250,10 +254,11 @@ void close_repo(){
     semctl(rsem, IPC_RMID, 0);
     semctl(lsem, IPC_RMID, 0);
     shmctl(repo_id, IPC_RMID, 0);
+    logger("DOWN: %d\n", my_client);
   } else {
     repo_off();
 
-    remove_server_with_server_id(my_server);
+    remove_server_with_server_id(my_server, 0);
 
     repo_on();
       shmdt(repo);
@@ -273,7 +278,7 @@ void close_server(){
 void server_list_request() {
   SERVER_LIST_REQUEST req;
   int list_id = msgget(SERVER_LIST_MSG_KEY, 0666);
-  int result = msgrcv(list_id, &req, sizeof(req), SERVER_LIST, IPC_NOWAIT);
+  int result = msgrcv(list_id, &req, sizeof(req)-sizeof(long), SERVER_LIST, IPC_NOWAIT);
   if(result == -1) return;
   printf("request: SERVER_LIST\n");
 
@@ -285,7 +290,7 @@ void server_list_request() {
     res.servers[i] = repo->servers[i].client_msgid;
     res.clients_on_servers[i] = repo->servers[i].clients;
   }
-  msgsnd(req.client_msgid, &res, sizeof(res), 0);
+  msgsnd(req.client_msgid, &res, sizeof(res)-sizeof(long), 0);
 }
 
 // LOGIN
@@ -305,7 +310,7 @@ int validate_user(char * login){
 
 void login_request() {
   CLIENT_REQUEST req;
-  int result = msgrcv(my_client, &req, sizeof(req), LOGIN, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(req)-sizeof(long), LOGIN, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: LOGIN (%s)\n", req.client_name);
@@ -317,6 +322,7 @@ void login_request() {
   res.status = validate_user(req.client_name);
 
   if( res.status == 201){
+    logger("LOGGED_IN@%d: %s\n", my_client, req.client_name);
     int found = 0;
     REP(i, repo->active_rooms)
       if( !strcmp(repo->rooms[i].name, "") ){
@@ -347,7 +353,7 @@ void login_request() {
   }
 
   printf("answer_to: %d\n", req.client_msgid);
-  msgsnd(req.client_msgid, &res, sizeof(res), 0);
+  msgsnd(req.client_msgid, &res, sizeof(res)-sizeof(long), 0);
   return;
 }
 
@@ -357,6 +363,8 @@ void login_request() {
 
 void logout_user(char * name){
   printf("dologout %s\n", name);
+
+  logger("LOGGED_OUT@%d: %s\n", my_client, name);
   repo_on();
   REP(i, repo->active_clients)
     if( !strcmp( repo->clients[i].name, name))
@@ -371,7 +379,7 @@ void logout_user(char * name){
 
 void logout_request() {
   CLIENT_REQUEST req;
-  int result = msgrcv(my_client, &req, sizeof(req), LOGOUT, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(req)-sizeof(long), LOGOUT, IPC_NOWAIT);
   if(result == -1) return;
   printf("request: LOGOUT (%s)\n", req.client_name);
   logout_user(req.client_name);
@@ -381,7 +389,7 @@ void logout_request() {
 // JOIN ROOM
 void join_room_request() {
   CHANGE_ROOM_REQUEST req;
-  int result = msgrcv(my_client, &req, sizeof(req), CHANGE_ROOM, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(req)-sizeof(long), CHANGE_ROOM, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: CHANGE_ROOM (%s) -> (%s)\n", req.client_name, req.room_name);
@@ -425,7 +433,7 @@ void join_room_request() {
   res.type = STATUS;
   res.status = 202;
 
-  msgsnd(req.client_msgid, &res, sizeof(res), 0);
+  msgsnd(req.client_msgid, &res, sizeof(res)-sizeof(long), 0);
 
   return;
 }
@@ -435,7 +443,7 @@ void join_room_request() {
 
 void room_list_request() {
   CLIENT_REQUEST req;
-  int result = msgrcv(my_client, &req, sizeof(req), ROOM_LIST, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(req)-sizeof(long), ROOM_LIST, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: ROOM_LIST\n");
@@ -452,14 +460,14 @@ void room_list_request() {
 
   repo_off();
 
-  msgsnd(req.client_msgid, &res, sizeof(res), 0);
+  msgsnd(req.client_msgid, &res, sizeof(res)-sizeof(long), 0);
 }
 
 // GLOBAL USERS LIST
 //
 void all_users_request(){
   CLIENT_REQUEST req;
-  int result = msgrcv(my_client, &req, sizeof(req), GLOBAL_CLIENT_LIST, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(req)-sizeof(long), GLOBAL_CLIENT_LIST, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: GLOBAL_USERS_LIST\n");
@@ -475,14 +483,14 @@ void all_users_request(){
 
   repo_off();
 
-  msgsnd(req.client_msgid, &res, sizeof(res), 0);
+  msgsnd(req.client_msgid, &res, sizeof(res)-sizeof(long), 0);
 }
 
 // ROOM USERS LIST
 
 void users_here_request(){
   CLIENT_REQUEST req;
-  int result = msgrcv(my_client, &req, sizeof(req), ROOM_CLIENT_LIST, IPC_NOWAIT);
+  int result = msgrcv(my_client, &req, sizeof(req)-sizeof(long), ROOM_CLIENT_LIST, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: ROOM_USERS_LIST\n");
@@ -511,13 +519,13 @@ void users_here_request(){
 
   repo_off();
 
-  msgsnd(req.client_msgid, &res, sizeof(res), 0);
+  msgsnd(req.client_msgid, &res, sizeof(res)-sizeof(long), 0);
 }
 
 // MESSAGE
 void message_request(){
   TEXT_MESSAGE msg;
-  int result = msgrcv(my_client, &msg, sizeof(msg), PUBLIC, IPC_NOWAIT);
+  int result = msgrcv(my_client, &msg, sizeof(msg)-sizeof(long), PUBLIC, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: PUBLIC MSG\n");
@@ -534,7 +542,7 @@ void message_request(){
 
   REP(j, servers_count){
     start_waiting_for_server(client_msgids[j]);
-    msgsnd(server_msgids[j], &msg, sizeof(msg), 0);
+    msgsnd(server_msgids[j], &msg, sizeof(msg)-sizeof(long), 0);
   }
   return;
 }
@@ -542,7 +550,7 @@ void message_request(){
 // BROADCAST MESSAGE
 void broadcast_message(){
   TEXT_MESSAGE msg;
-  int result = msgrcv(my_server, &msg, sizeof(msg), PUBLIC, IPC_NOWAIT);
+  int result = msgrcv(my_server, &msg, sizeof(msg)-sizeof(long), PUBLIC, IPC_NOWAIT);
   if(result == -1) return;
 
   int server_to_respond = msg.from_id;
@@ -559,7 +567,7 @@ void broadcast_message(){
 
   REP(j, repo->active_clients)
     if( repo->clients[j].server_id == my_client && !strcmp(repo-> clients[j].room, room))
-      msgsnd(get_user_id(repo->clients[j].name), &msg, sizeof(msg), 0);
+      msgsnd(get_user_id(repo->clients[j].name), &msg, sizeof(msg)-sizeof(long), 0);
 
   repo_off();
 
@@ -567,14 +575,14 @@ void broadcast_message(){
   res.type = STATUS;
   res.status = my_client;
 
-  msgsnd(server_to_respond, &res, sizeof(res), 0);
+  msgsnd(server_to_respond, &res, sizeof(res)-sizeof(long), 0);
 }
 
 // WHISPER
 void look_for_user(TEXT_MESSAGE msg){
   if( get_user_id(msg.to) != -1){
     msg.from_id = 0;
-    msgsnd(get_user_id(msg.to), &msg, sizeof(msg), 0);
+    msgsnd(get_user_id(msg.to), &msg, sizeof(msg)-sizeof(long), 0);
   }
   else{
     msg.from_id = my_server;
@@ -591,13 +599,13 @@ void look_for_user(TEXT_MESSAGE msg){
     repo_off();
 
     start_waiting_for_server(rec_client);
-    msgsnd(rec_server, &msg, sizeof(msg), 0);
+    msgsnd(rec_server, &msg, sizeof(msg)-sizeof(long), 0);
   }
 }
 
 void whisper_request(){
   TEXT_MESSAGE msg;
-  int result = msgrcv(my_client, &msg, sizeof(msg), PRIVATE, IPC_NOWAIT);
+  int result = msgrcv(my_client, &msg, sizeof(msg)-sizeof(long), PRIVATE, IPC_NOWAIT);
   if(result == -1) return;
 
   printf("request: PRIVATE MSG\n");
@@ -609,7 +617,7 @@ void whisper_request(){
 // BROADCAST WHISPER
 void broadcast_whisper(){
   TEXT_MESSAGE msg;
-  int result = msgrcv(my_server, &msg, sizeof(msg), PRIVATE, IPC_NOWAIT);
+  int result = msgrcv(my_server, &msg, sizeof(msg)-sizeof(long), PRIVATE, IPC_NOWAIT);
   if(result == -1) return;
 
   int server_to_respond = msg.from_id;
@@ -621,7 +629,7 @@ void broadcast_whisper(){
 
   printf("I SENT :( %d -> %d\n", server_to_respond, res.status);
 
-  msgsnd(server_to_respond, &res, sizeof(res), 0);
+  msgsnd(server_to_respond, &res, sizeof(res)-sizeof(long), 0);
 }
 
 void increase_timeouts(){
@@ -631,6 +639,7 @@ void increase_timeouts(){
 void kill_dead(){
   REP(i, user_count)
     if( user_timeout[i] >= TIMEOUT){
+      logger("LOGGED_OUT@%d: %s\n", my_client, user_name[i]);
       logout_user(user_name[i]);
     }
 }
@@ -647,20 +656,20 @@ void heartbeat(){
     req.type = HEARTBEAT;
 
     REP(i, user_count)
-      msgsnd(user_msg[i], &req, sizeof(req), 0);
+      msgsnd(user_msg[i], &req, sizeof(req)-sizeof(long), 0);
   }
 }
 
 void heartbeat_response(){
   CLIENT_REQUEST hb;
-  int result = msgrcv(my_client, &hb, sizeof(hb), HEARTBEAT, IPC_NOWAIT);
+  int result = msgrcv(my_client, &hb, sizeof(hb)-sizeof(long), HEARTBEAT, IPC_NOWAIT);
   if(result == -1) return;
   reset_timeout(hb.client_name);
 }
 
 void server_responses(){
   STATUS_RESPONSE res;
-  int result = msgrcv(my_server, &res, sizeof(res), STATUS, IPC_NOWAIT);
+  int result = msgrcv(my_server, &res, sizeof(res)-sizeof(long), STATUS, IPC_NOWAIT);
   if(result == -1) return;
   server_responded(res.status);
 }
@@ -677,7 +686,6 @@ void server_timer(){
 int main() {
   repo_init();
   server_start_time = start_time = time(0);
-  logger("UP: %d, repo sem: %d log sem: %d repo_id: %d\n", getpid(), rsem, lsem, rid);
 
   repo_off();
   fetch_repo();
@@ -713,9 +721,7 @@ int main() {
 
 
 
-
-
-void remove_server_with_server_id(int id){
+void remove_server_with_server_id(int id, int zomb){
     repo_on();
     repo->active_servers--;
 
@@ -723,6 +729,10 @@ void remove_server_with_server_id(int id){
       if(repo->servers[i].server_msgid == id)  {
         msgctl(repo->servers[i].client_msgid, IPC_RMID, 0);
         msgctl(id, IPC_RMID, 0);
+
+        if(zomb == 1)
+          logger("KILLED_ZOMBIE: %d\n", repo->servers[i].client_msgid);
+        logger("DOWN: %d\n", repo->servers[i].client_msgid);
 
 
         REP(j, repo->active_clients)

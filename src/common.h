@@ -27,6 +27,7 @@
 #define TIMEOUT 5
 
 #define HEARTBEAT_TIME 1
+#define LOG_FILE "/tmp/czat.log"
 
 // Typy komunikatów
 typedef enum{
