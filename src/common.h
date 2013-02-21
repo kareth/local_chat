@@ -26,6 +26,8 @@
 // maksymalny czas reakcji serwera w sekundach
 #define TIMEOUT 5
 
+#define HEARTBEAT_TIME 1
+
 // Typy komunikatów
 typedef enum{
 	SERVER_LIST = 1

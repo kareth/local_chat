@@ -1,10 +1,26 @@
 #include "libraries.h"
 
 int my_server;
-char my_login[2000];
+char my_login[MAX_NAME_SIZE];
 int pids[200], pc, my_queue;
+int client_repo, sem;
+CLIENT *my_info;
 
-// REQUESTS
+
+void semP(int id){
+  struct sembuf buf;
+  buf.sem_flg = 0; buf.sem_num = 0; buf.sem_op = -1;
+  semop(id, &buf, 1);
+}
+
+void semV(int id){
+  struct sembuf buf;
+  buf.sem_flg = 0; buf.sem_num = 0; buf.sem_op = 1;
+  semop(id, &buf, 1);
+}
+
+void info_on(){ semP(sem); }
+void info_off(){semV(sem); }
 
 
 //SERVER LIST
@@ -35,8 +51,18 @@ int request_login(STATUS_RESPONSE *status, char * login, int server){
   msgsnd(server, &req, sizeof(req), 0);
 
   STATUS_RESPONSE res;
-  printf("wait_on: %d\n", my_queue);
-  if ( msgrcv(my_queue, &res, sizeof(res), STATUS, 0) == -1) perror("error");
+  msgrcv(my_queue, &res, sizeof(res), STATUS, 0);
+
+  strcpy(my_login, login);
+  my_server = server;
+
+  printf("%s\n",my_login);
+
+  info_on();
+    strcpy(my_info->name, my_login);
+    my_info->server_id = my_server;
+    printf("SETUP %s %d\n",my_info->name, my_info->server_id);
+  info_off();
 
   *status = res;
   return 0;
@@ -44,7 +70,6 @@ int request_login(STATUS_RESPONSE *status, char * login, int server){
 
 // LOGOUT
 int request_logout(){
-
   CLIENT_REQUEST req;
   req.type = LOGOUT;
   req.client_msgid = my_queue;
@@ -58,7 +83,6 @@ int request_logout(){
 
 // JOIN ROOM
 int request_join_room(STATUS_RESPONSE *status, char * channel){
-
   CHANGE_ROOM_REQUEST req;
   req.type = CHANGE_ROOM;
   req.client_msgid = my_queue;
@@ -73,7 +97,6 @@ int request_join_room(STATUS_RESPONSE *status, char * channel){
   *status = res;
   return 0;
 }
-
 
 // ROOM LIST
 int request_room_list(ROOM_LIST_RESPONSE *list){
@@ -91,8 +114,7 @@ int request_room_list(ROOM_LIST_RESPONSE *list){
   return 0;
 }
 
-
-// USERS LIST
+// ROOM USERS LIST
 int request_users_here(ROOM_CLIENT_LIST_RESPONSE *users){
   CLIENT_REQUEST req;
   req.type = ROOM_CLIENT_LIST;
@@ -108,6 +130,7 @@ int request_users_here(ROOM_CLIENT_LIST_RESPONSE *users){
   return 0;
 }
 
+// GLOBAL USERS LIST
 int request_all_users(GLOBAL_CLIENT_LIST_RESPONSE *users){
   CLIENT_REQUEST req;
   req.type = GLOBAL_CLIENT_LIST;
@@ -123,10 +146,7 @@ int request_all_users(GLOBAL_CLIENT_LIST_RESPONSE *users){
   return 0;
 }
 
-
-
 // SEND MESSAGE
-
 int send_message(char * text){
   TEXT_MESSAGE req;
   req.type = PUBLIC;
@@ -139,6 +159,7 @@ int send_message(char * text){
   return 0;
 }
 
+// WHISPER
 int send_whisper(char * user, char * text){
   TEXT_MESSAGE req;
   req.type = PRIVATE;
@@ -153,9 +174,7 @@ int send_whisper(char * user, char * text){
 }
 
 
-
 // Others
-
 void close_client(){
   request_logout();
   REP(i, pc)
@@ -198,19 +217,52 @@ void handle_room_client_list();
 void handle_global_client_list();
 
 
-void heartbeat(){}
+void heartbeat(){
+  STATUS_RESPONSE hb;
 
-// MAIN
+  CLIENT_REQUEST req;
+  req.type = HEARTBEAT;
+  req.client_msgid = my_queue;
+
+  while (1) {
+    int res = msgrcv(my_queue, &hb, sizeof(hb), HEARTBEAT, 0);
+    if(res == -1) break; // prevent loop on ctrlC - not sure if necessary here
+
+    info_on();
+      if( my_info->server_id != hb.status) continue;
+      strcpy(req.client_name, my_info->name);
+    info_off();
+
+    msgsnd(hb.status, &req, sizeof(req), 0);
+  }
+}
+
+// ---------------------------------------------- MAIN --------------------------------
+
+void init_client_memo(){
+  pc = 0;
+  my_server = INF;
+  my_queue = msgget(IPC_PRIVATE, 0666 | IPC_CREAT);
+
+  sem = semget(IPC_PRIVATE, 1, 0666 | IPC_CREAT);
+  semctl(sem, 0, SETVAL, 0);
+
+  client_repo = shmget(IPC_PRIVATE, sizeof(REPO), 0666 | IPC_CREAT);
+  CLIENT *mem = shmat(client_repo, NULL, 0);
+  CLIENT c;
+  *mem = c;
+  shmdt(mem);
+
+  my_info = shmat(client_repo, NULL, 0);
+  info_off();
+}
 
 int main() {
   srand(time(0));
   signal(SIGINT, close_client);
   signal(SIGTERM, close_client);
-
-  my_server = INF;
-  my_queue = msgget(IPC_PRIVATE, 0666 | IPC_CREAT);
+  init_client_memo();
   if( handle_server_list() == -1) exit(1);
-  pc = 0;
 
   if((pids[pc++] = fork()) == 0)
     wait_for_public();
@@ -333,7 +385,7 @@ void handle_logout(){
 
 
 void handle_login(char * input){
-  char login[200];
+  char login[2000];
   int server;
   sscanf(input, "%s %d", login, &server);
 
@@ -347,8 +399,6 @@ void handle_login(char * input){
       printf("Im sorry, user with username '%s', already exists\n", login);
     if(status.status == 201){
       printf("Successfully logged in as '%s'\n", login);
-      strcpy(my_login, login);
-      my_server = server;
     }
   }
 }

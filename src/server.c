@@ -4,17 +4,20 @@ int rid, rsem, lsem;
 int mc, ms;
 REPO *repo;
 
+time_t start_time;
+
 int my_server, my_client;
 
-char user_name[50][50];
-int user_msg[50];
+char user_name[SERVER_CAPACITY][MAX_NAME_SIZE];
+int user_msg[SERVER_CAPACITY];
+int user_timeout[SERVER_CAPACITY];
 int user_count = 0;
 
 void add_local_user(char * name, int id){
   strcpy(user_name[user_count], name);
   user_msg[user_count] = id;
+  user_timeout[user_count] = 0;
   user_count++;
-  printf("Adding user: %s %d\n", name, id);
 }
 
 void remove_local_user(char * name){
@@ -23,6 +26,7 @@ void remove_local_user(char * name){
       if( i != user_count - 1){
         strcpy(user_name[i], user_name[user_count-1]);
         user_msg[i] = user_msg[user_count-1];
+        user_timeout[i] = user_timeout[user_count-1];
       }
 
       user_count--;
@@ -31,7 +35,6 @@ void remove_local_user(char * name){
 }
 
 int get_user_id(char * name){
-  printf("checking user: %s\n",name);
   REP(i, user_count)
     if( !strcmp(user_name[i], name)){
       return user_msg[i];
@@ -39,6 +42,11 @@ int get_user_id(char * name){
   return -1;
 }
 
+void reset_timeout(char * name){
+  REP(i, user_count)
+    if( !strcmp(user_name[i], name))
+      user_timeout[i] = 0;
+}
 
 void semP(int id){
   struct sembuf buf;
@@ -85,16 +93,12 @@ int comp_r(const void *a, const void *b){
 }
 
 // Servers
-
 void register_server(){
   srand(time(0));
   repo_on();
-  my_client = rand()%2000000009;
-  my_server = rand()%2000000009;
-  printf("server_Q: %d\n", my_server);
 
-  my_client = msgget(my_client, 0666 | IPC_CREAT);
-  my_server = msgget(my_server, 0666 | IPC_CREAT);
+  my_client = msgget(IPC_PRIVATE, 0666 | IPC_CREAT);
+  my_server = msgget(IPC_PRIVATE, 0666 | IPC_CREAT);
   msgget(SERVER_LIST_MSG_KEY, 0666 | IPC_CREAT);
 
   repo->servers[repo->active_servers].client_msgid = my_client;
@@ -102,7 +106,6 @@ void register_server(){
   repo->servers[repo->active_servers].clients = 0;
 
   repo->active_servers++;
-  printf("active_servers: %d\n", repo->active_servers);
 
   qsort(repo->servers, MAX_SERVER_NUM, sizeof(SERVER), comp_s);
   repo_off();
@@ -110,7 +113,6 @@ void register_server(){
 
 
 // Repository
-
 void lsem_init() {
   lsem = semget(SEM_LOG, 1, 0666 | IPC_CREAT | IPC_EXCL);
   if(lsem == -1) lsem = semget(SEM_LOG, 1, 0666);
@@ -168,7 +170,6 @@ void close_repo(){
   msgctl(my_id, IPC_RMID, 0);
 
   if(repo->active_servers == 1) {
-    printf("should be no\n");
     int list_id = msgget(SERVER_LIST_MSG_KEY, 0666);
     int repo_id = shmget(ID_REPO, sizeof(REPO), 0666);
 
@@ -178,7 +179,6 @@ void close_repo(){
     shmctl(repo_id, IPC_RMID, 0);
   } else {
     repo->active_servers--;
-    printf("active_servers: %d\n", repo->active_servers);
 
     REP(i, MAX_SERVER_NUM){
       if(repo->servers[i].client_msgid == getpid())  {
@@ -200,7 +200,7 @@ void close_server(){
   exit(1);
 }
 
-// Requests
+
 
 
 // SERVER_LIST
@@ -221,8 +221,6 @@ void server_list_request() {
   }
   msgsnd(req.client_msgid, &res, sizeof(res), 0);
 }
-
-
 
 // LOGIN
 int validate_user(char * login){
@@ -290,26 +288,27 @@ void login_request() {
 
 
 // LOGOUT
+
+void logout_user(char * name){
+  printf("dologout %s\n", name);
+  repo_on();
+  REP(i, repo->active_clients)
+    if( !strcmp( repo->clients[i].name, name))
+      strcpy( repo->clients[i].name, NONAME);
+
+  repo->active_clients--;
+  qsort(repo->clients, MAX_CLIENTS, sizeof(CLIENT), comp_c);
+  remove_local_user(name);
+  repo_off();
+  return;
+}
+
 void logout_request() {
   CLIENT_REQUEST req;
   int result = msgrcv(my_client, &req, sizeof(req), LOGOUT, IPC_NOWAIT);
   if(result == -1) return;
-
   printf("request: LOGOUT (%s)\n", req.client_name);
-
-  repo_on();
-
-  REP(i, repo->active_clients)
-    if( !strcmp( repo->clients[i].name, req.client_name))
-      strcpy( repo->clients[i].name, NONAME);
-
-  repo->active_clients--;
-
-  qsort(repo->clients, MAX_CLIENTS, sizeof(CLIENT), comp_c);
-
-  remove_local_user(req.client_name);
-
-  repo_off();
+  logout_user(req.client_name);
   return;
 }
 
@@ -323,7 +322,7 @@ void join_room_request() {
 
   repo_on();
 
-  char old_room[2000];
+  char old_room[MAX_NAME_SIZE];
   REP(i, repo->active_clients)
     if( !strcmp( repo->clients[i].name, req.client_name)){
       strcpy( old_room, repo->clients[i].room);
@@ -427,7 +426,7 @@ void users_here_request(){
   ROOM_CLIENT_LIST_RESPONSE res;
   res.type = ROOM_CLIENT_LIST;
 
-  char user_room[2000];
+  char user_room[MAX_NAME_SIZE];
   REP(i, repo->active_clients)
     if(!strcmp(repo->clients[i].name, req.client_name)){
       strcpy(user_room, repo->clients[i].room);
@@ -450,7 +449,6 @@ void users_here_request(){
 }
 
 // MESSAGE
-
 void message_request(){
   TEXT_MESSAGE msg;
   int result = msgrcv(my_client, &msg, sizeof(msg), PUBLIC, IPC_NOWAIT);
@@ -459,7 +457,7 @@ void message_request(){
   printf("request: PUBLIC MSG\n");
   msg.from_id = my_server;
 
-  int servers[30], servers_count;
+  int servers[MAX_SERVER_NUM], servers_count;
   repo_on();
     servers_count = repo->active_servers;
     REP(i, repo->active_servers)
@@ -468,25 +466,23 @@ void message_request(){
 
   REP(j, servers_count){
     if( fork() != 0){
-      printf("Sending msg '%s' to server %d\n",msg.text, servers[j]);
       msgsnd(servers[j], &msg, sizeof(msg), 0);
     }
     else{
       STATUS_RESPONSE res;
-      msgrcv(my_server, &res, sizeof(res), STATUS, 0);
-      printf("STATUS RECEIVED\n");
+      int feedback = msgrcv(my_server, &res, sizeof(res), STATUS, IPC_NOWAIT);
+      //if( feedback == -1) kill_dead_server()
       exit(1);
     }
   }
   return;
 }
 
+// BROADCAST MESSAGE
 void broadcast_message(){
   TEXT_MESSAGE msg;
   int result = msgrcv(my_server, &msg, sizeof(msg), PUBLIC, IPC_NOWAIT);
   if(result == -1) return;
-
-  printf("BROADCAST: \n");
 
   int server_to_respond = msg.from_id;
 
@@ -495,21 +491,14 @@ void broadcast_message(){
 
   repo_on();
 
-  char room[2000];
+  char room[MAX_NAME_SIZE];
   REP(i, repo->active_clients)
     if( !strcmp(repo->clients[i].name, msg.from_name))
       strcpy(room, repo->clients[i].room);
 
-  printf("room: '%s'\n",room);
-  REP(j, repo->active_clients){
-    printf("client servered to: %s %d %s\n",repo->clients[j].name, repo->clients[j].server_id, repo->clients[j].room);
-    if( repo->clients[j].server_id == my_client && !strcmp(repo-> clients[j].room, room)){
-      printf("sending_to %d - %s\n",get_user_id(repo->clients[j].name), repo->clients[j].name );
-      int id = get_user_id(repo->clients[j].name);
-      printf("id: %d\n",id);
-      msgsnd(id, &msg, sizeof(msg), 0);
-    }
-  }
+  REP(j, repo->active_clients)
+    if( repo->clients[j].server_id == my_client && !strcmp(repo-> clients[j].room, room))
+      msgsnd(get_user_id(repo->clients[j].name), &msg, sizeof(msg), 0);
 
   repo_off();
 
@@ -521,7 +510,6 @@ void broadcast_message(){
 }
 
 // WHISPER
-
 void look_for_user(TEXT_MESSAGE msg){
   if( get_user_id(msg.to) != -1){
     msg.from_id = 0;
@@ -558,6 +546,7 @@ void whisper_request(){
   return;
 }
 
+// BROADCAST WHISPER
 void broadcast_whisper(){
   TEXT_MESSAGE msg;
   int result = msgrcv(my_server, &msg, sizeof(msg), PUBLIC, IPC_NOWAIT);
@@ -573,8 +562,41 @@ void broadcast_whisper(){
   msgsnd(server_to_respond, &res, sizeof(res), 0);
 }
 
-// MAIN
+void increase_timeouts(){
+  REP(i, user_count) user_timeout[i]++;
+}
 
+void kill_dead(){
+  REP(i, user_count)
+    if( user_timeout[i] >= TIMEOUT){
+      logout_user(user_name[i]);
+    }
+}
+
+void heartbeat(){
+  if( time(0) - start_time > HEARTBEAT_TIME){
+
+    increase_timeouts();
+    kill_dead();// BWAHHAHAHAHAHAHAHAHHAHAHA noobs.
+
+    start_time = time(0);
+    STATUS_RESPONSE req;
+    req.status = my_client;
+    req.type = HEARTBEAT;
+
+    REP(i, user_count)
+      msgsnd(user_msg[i], &req, sizeof(req), 0);
+  }
+}
+
+void heartbeat_response(){
+  CLIENT_REQUEST hb;
+  int result = msgrcv(my_client, &hb, sizeof(hb), HEARTBEAT, IPC_NOWAIT);
+  if(result == -1) return;
+  reset_timeout(hb.client_name);
+}
+
+// MAIN
 int main() {
   repo_init();
 
@@ -601,6 +623,8 @@ int main() {
     broadcast_message();
     whisper_request();
     broadcast_whisper();
+    heartbeat();
+    heartbeat_response();
   }
 
   close_repo();
