@@ -6,7 +6,7 @@ int pids[200], pc, my_queue;
 int client_repo, sem;
 CLIENT *my_info;
 
-char color_red[30], color_green[30], color_blue[30],color_yellow[30], color_white[30], color_crystal[30];
+char color_red[30], color_green[30], color_blue[30],color_yellow[30], color_white[30], color_crystal[30], color_purple[30];
 
 
 void semP(int id){
@@ -190,7 +190,7 @@ void wait_for_public(){
   while (1) {
     int res = msgrcv(my_queue, &msg, sizeof(msg), PUBLIC, 0);
     if(res == -1) break; // prevent loop on ctrlC
-    printf("%s\n> [%s @ %s] '%s'\n\n", color_crystal, msg.from_name, ctime(&msg.time), msg.text);
+    printf("%s\n> [%s @ %s] > '%s'\n\n", color_crystal, msg.from_name, ctime(&msg.time), msg.text);
   }
 }
 
@@ -199,7 +199,7 @@ void wait_for_private(){
   while (1) {
     int res = msgrcv(my_queue, &msg, sizeof(msg), PRIVATE, 0);
     if(res == -1) break; // prevent loop on ctrlC
-    printf("WHISP:\"%s\"@%s:%s\n", msg.from_name, ctime(&msg.time), msg.text);
+    printf("%s\n> [%s @ %s] > '%s'\n\n", color_purple, msg.from_name, ctime(&msg.time), msg.text);
   }
 }
 
@@ -266,6 +266,7 @@ void init_colors(){
   strcpy(color_yellow, "\033[01;33m");
   strcpy(color_white, "\033[22;37m");
   strcpy(color_crystal, "\033[01;37m");
+  strcpy(color_purple, "\033[22;35");
 }
 
 int main() {
