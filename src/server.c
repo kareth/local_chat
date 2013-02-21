@@ -533,9 +533,7 @@ void users_here_request(){
 
   REP(j, repo->active_clients)
     if( !strcmp(user_room, repo->clients[j].room)){
-      strcpy(res.names[i], repo->clients[j].name);
-      printf("----user: '%s'\n",res.names[i]);
-      count++;
+      strcpy(res.names[count++], repo->clients[j].name);
     }
 
   res.active_clients = count;

@@ -247,7 +247,7 @@ void init_colors(){
   strcpy(color_yellow, "\033[01;33m");
   strcpy(color_white, "\033[22;37m");
   strcpy(color_crystal, "\033[01;37m");
-  strcpy(color_purple, "\033[22;35");
+  strcpy(color_purple, "\033[22;35m");
 }
 
 int main() {
