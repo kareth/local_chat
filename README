@@ -2,7 +2,6 @@ IPC LOCAL CHAT
 
 zurkowski.piotr@gmail.com
 
-
 Application consists of 2 main modules - client and server. Each client is connected to exactly one server, but servers can handle many users.
 
 Repository:
@@ -20,37 +19,43 @@ Server:
 
     - Login (username, server)
       Listening on server's client queue. Appends user to list of signed users.
-      
-      
-    - Logout -
-    - Join room - 
-    - Room list- 
-    - Users in room- 
-    - All users - 
-    - Send public msg -
-    - Send private msg - 
-    
 
+    - Logout
+      Remove user from users list on verver and repo.
 
-1. Makefile
-  - make server/client/all - odpowiednio buduje binarki serwera, klienta bądź obie
-  - make clean - usuwa wspólne IPC z systemu
+    - Join room (name)
+      Join specified room. If room doesnt exist it creates it. Also removes user from current room.
 
-2. Serwer - uruchomić, log w /tmp/czat.log
-  - serwer jednoprocesowy
-  - obsługa komunikatów przy pomocy asynchronicznych komunikatów
-  - współpraca z wieloma serwerami i użytkownikami
-  - sprawdzanie klientów heartbeatami oraz serwerów odpowiednimi statusami
+    - Room list
+      Fetch list of all rooms from repo through server
 
-3. Klient - uruchomić, podać nazwę użytkownika, serwer dobiera się automatycznie (wybierany jest najmniej obciążony), chyba, że nazwa jest zajęta, bądź serwer jest pełny
-  - dwa procesy - proces wypisywania na ekran (i odbioru komunikatów), proces odczytujący (i wysyłający komunikaty do serwera)
-  - współpraca z jednym serwerem (serwer rozsyła wiadomości dalej)
-  - dostępne komendy
-    - /rooms - wypisuje pokoje
-    - /users - wypisuje uzytkownikow
-    - /join POKOJ - wchodzi na dany POKOJ
-    - /msg UZYTKOWNIK WIADOMOSC - wysyla priva do UZYTKOWNIKA
-    - /quit - wylogowanie i wylaczenie
-    - zwykla wiadomosc - napisanie wiadomosci i wyslanie do aktualnego kanalu
+    - Users in room
+      Fetch list of all users in the room that I am currently in.
 
-4. W przypadku problemow z kompatybilnoscia, nalezy sprawdzic zawartosc stalych w common.h
+    - All users
+      Fetch all users connected to any server.
+
+    - Send public msg
+      Send message visible to any client in current room.
+
+    - Send private msg (name)
+      Send message to particular person.
+
+    - Heartbeat
+      Periodically sends info to all signed users and awaits their response. If such is not received, logs them off.
+
+  Client:
+    Client can request all actions listed above.
+    Uses one personal msg queue to receive data from server, and server c_msg queue to send info there.
+    To get help about possible commands simply type '/help'
+
+  Compilation:
+    Running makefile will automatically create two executables - client and server in build directory.
+
+  Problems:
+    On some servers IPC queues are limited. U can see them with 'ipcs' and rm with 'ipcrm -m/q <id>'
+
+  Further readings:
+    Api description in PL is available here: https://docs.google.com/document/d/1av-0hNaww-EtgrvXE576xG8z8WCDz8sYd9U14l7Ev6U/edit
+
+Have fun talking!
