@@ -1,5 +1,9 @@
 #include "libraries.h"
 
+#define TIMED(X)  time_t start = time(0);int flag = 0;while(1){ if(time(0)-start >= TIMEOUT){ server_timeout(); flag = -1; break;}int result=X;if( result == -1) continue; break; }
+#define TIMEX(X)  time_t start = time(0);int flag = 0;while(1){ if(time(0)-start >= TIMEOUT){ everys_timeout(); flag = -1; break;}int result=X;if( result == -1) continue; break; }
+
+
 int my_server;
 char my_login[MAX_NAME_SIZE];
 int pids[200], pc, my_queue;
@@ -24,6 +28,25 @@ void semV(int id){
 void info_on(){ semP(sem); }
 void info_off(){semV(sem); }
 
+void server_timeout(){
+  printf("%s\n> timeout!\n", color_red);
+
+  printf("%s> Your server is dead, login again.\n", color_yellow);
+  printf("\n%s", color_white);
+
+  info_on();
+    my_server = INF;
+    strcpy(my_login, NONAME);
+    my_info->server_id = INF;
+    strcpy(my_info->name, NONAME);
+  info_off();
+}
+
+void everys_timeout(){
+  printf("\ntimeout!\n");
+  printf("\n%s", color_white);
+}
+
 
 //SERVER LIST
 int request_server_list(SERVER_LIST_RESPONSE *servers){
@@ -35,7 +58,8 @@ int request_server_list(SERVER_LIST_RESPONSE *servers){
   req.client_msgid = my_queue;
 
   msgsnd(list_id, &req, sizeof(req)-sizeof(long), 0);
-  msgrcv(my_queue, servers, sizeof(SERVER_LIST_RESPONSE)-sizeof(long), SERVER_LIST, 0);
+
+  TIMEX(msgrcv(my_queue, servers, sizeof(SERVER_LIST_RESPONSE)-sizeof(long), SERVER_LIST, 0));
   return 0;
 }
 
@@ -89,8 +113,8 @@ int request_join_room(STATUS_RESPONSE *status, char * channel){
   strcpy(req.client_name, my_login);
 
   msgsnd(my_server, &req, sizeof(CHANGE_ROOM_REQUEST)-sizeof(long), 0);
-  msgrcv(my_queue, status, sizeof(STATUS_RESPONSE)-sizeof(long), CHANGE_ROOM, 0);
-  return 0;
+  TIMED( msgrcv(my_queue, status, sizeof(STATUS_RESPONSE)-sizeof(long), CHANGE_ROOM, IPC_NOWAIT) );
+  return flag;
 }
 
 // ROOM LIST
@@ -101,8 +125,8 @@ int request_room_list(ROOM_LIST_RESPONSE *list){
   strcpy(req.client_name, my_login);
 
   msgsnd(my_server, &req, sizeof(CLIENT_REQUEST)-sizeof(long), 0);
-  msgrcv(my_queue, list, sizeof(ROOM_LIST_RESPONSE)-sizeof(long), ROOM_LIST, 0);
-  return 0;
+  TIMED( msgrcv(my_queue, list, sizeof(ROOM_LIST_RESPONSE)-sizeof(long), ROOM_LIST, 0));
+  return flag;
 }
 
 // ROOM USERS LIST
@@ -113,8 +137,8 @@ int request_users_here(ROOM_CLIENT_LIST_RESPONSE *users){
   strcpy(req.client_name, my_login);
 
   msgsnd(my_server, &req, sizeof(CLIENT_REQUEST)-sizeof(long), 0);
-  msgrcv(my_queue, users, sizeof(ROOM_CLIENT_LIST_RESPONSE)-sizeof(long), ROOM_CLIENT_LIST, 0);
-  return 0;
+  TIMED(msgrcv(my_queue, users, sizeof(ROOM_CLIENT_LIST_RESPONSE)-sizeof(long), ROOM_CLIENT_LIST, 0));
+  return flag;
 }
 
 // GLOBAL USERS LIST
@@ -125,8 +149,8 @@ int request_all_users(GLOBAL_CLIENT_LIST_RESPONSE *users){
   strcpy(req.client_name, my_login);
 
   msgsnd(my_server, &req, sizeof(CLIENT_REQUEST)-sizeof(long), 0);
-  msgrcv(my_queue, users, sizeof(GLOBAL_CLIENT_LIST_RESPONSE)-sizeof(long), GLOBAL_CLIENT_LIST, 0);
-  return 0;
+  TIMED(msgrcv(my_queue, users, sizeof(GLOBAL_CLIENT_LIST_RESPONSE)-sizeof(long), GLOBAL_CLIENT_LIST, 0));
+  return flag;
 }
 
 // SEND MESSAGE
@@ -166,14 +190,18 @@ void close_client(){
   msgctl(my_queue, IPC_RMID, 0);
 }
 
+
+
 void wait_for_public(){
   TEXT_MESSAGE msg;
   while (1) {
     int res = msgrcv(my_queue, &msg, sizeof(TEXT_MESSAGE)-sizeof(long), PUBLIC, 0);
     if(res == -1) break; // prevent loop on ctrlC
-    printf("%s\n> [%s @ %s] > '%s'\n\n", color_crystal, msg.from_name, ctime(&msg.time), msg.text);
+    char *s = ctime(&msg.time);
+    *(s+24) = 0;
+    printf("%s\n> [@%s] [%s] > '%s'\n", color_crystal, s, msg.from_name, msg.text);
   }
-  printf("\n%s", color_white);
+  printf("%s\n", color_white);
 }
 
 void wait_for_private(){
@@ -181,12 +209,11 @@ void wait_for_private(){
   while (1) {
     int res = msgrcv(my_queue, &msg, sizeof(TEXT_MESSAGE)-sizeof(long), PRIVATE, 0);
     if(res == -1) break; // prevent loop on ctrlC
-    char time[100];
-    sprintf(ctime(&msg.time), "%s\n", ctime(&msg.time));
-    //time[strlen(time)-2]='\0';
-    printf("%s\n> [%s @ %s] > '%s'\n\n", color_purple, msg.from_name, time, msg.text);
+    char *s = ctime(&msg.time);
+    *(s+24) = 0;
+    printf("%s\n> [@%s] [%s] > '%s'\n", color_purple, s, msg.from_name, msg.text);
   }
-  printf("\n%s", color_white);
+  printf("%s\n", color_white);
 }
 
 void handle_command(char * cd, char * in);
@@ -329,6 +356,10 @@ int handle_server_list(){
 }
 
 void handle_whisper(char * input){
+  if(my_server == INF){
+    printf("%s \n> Sign in to send message!\n\n%s", color_red, color_white);
+    return;
+  }
   char target[2000];
   sscanf(input, "%s", target);
   memmove(input, input+strlen(target)+2, strlen(input));
@@ -339,10 +370,13 @@ void handle_whisper(char * input){
 
 void handle_global_client_list(){
   GLOBAL_CLIENT_LIST_RESPONSE users;
-  request_all_users(&users);
-  printf("%s \n> All active users: %d\n", color_blue, users.active_clients);
-  REP(i, users.active_clients){
-    printf("%s> - user: '%s'\n", color_blue, users.names[i]);
+  if(request_all_users(&users) == -1)
+    printf("%s \n> Cannot fetch users list\n", color_red);
+  else{
+    printf("%s \n> All active users: %d\n", color_blue, users.active_clients);
+    REP(i, users.active_clients){
+      printf("%s> - user: '%s'\n", color_blue, users.names[i]);
+    }
   }
   printf("\n%s", color_white);
 }
@@ -350,10 +384,13 @@ void handle_global_client_list(){
 
 void handle_room_client_list(){
   ROOM_CLIENT_LIST_RESPONSE users;
-  request_users_here(&users);
-  printf("%s \n> Active users on this channel: %d\n", color_blue, users.active_clients);
-  REP(i, users.active_clients){
-    printf("%s> - user '%s'\n", color_blue, users.names[i]);
+  if(request_users_here(&users) == -1)
+    printf("%s \n> Cannot fetch users list\n", color_red);
+  else{
+    printf("%s \n> Active users on this channel: %d\n", color_blue, users.active_clients);
+    REP(i, users.active_clients){
+      printf("%s> - user '%s'\n", color_blue, users.names[i]);
+    }
   }
   printf("\n%s", color_white);
 }
@@ -362,7 +399,7 @@ void handle_room_client_list(){
 void handle_room_list(){
   ROOM_LIST_RESPONSE rooms;
   if( request_room_list(&rooms) == -1)
-    printf("%s \n> Your server is dead bro...\n", color_red);
+    printf("%s \n> Cannot fetch room list\n", color_red);
   else{
     printf("%s \n> Active rooms: %d\n",color_blue, rooms.active_rooms);
     REP(i, rooms.active_rooms){
