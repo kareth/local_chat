@@ -88,6 +88,7 @@ int request_login(STATUS_RESPONSE *status, char * login, int server){
 
 // LOGOUT
 int request_logout(){
+  if(my_server == INF) return -1;
   CLIENT_REQUEST req;
   req.type = LOGOUT;
   req.client_msgid = my_queue;
@@ -106,6 +107,7 @@ int request_logout(){
 
 // JOIN ROOM
 int request_join_room(STATUS_RESPONSE *status, char * channel){
+  if(my_server == INF) return -1;
   CHANGE_ROOM_REQUEST req;
   req.type = CHANGE_ROOM;
   req.client_msgid = my_queue;
@@ -119,6 +121,7 @@ int request_join_room(STATUS_RESPONSE *status, char * channel){
 
 // ROOM LIST
 int request_room_list(ROOM_LIST_RESPONSE *list){
+  if(my_server == INF) return -1;
   CLIENT_REQUEST req;
   req.type = ROOM_LIST;
   req.client_msgid = my_queue;
@@ -131,6 +134,7 @@ int request_room_list(ROOM_LIST_RESPONSE *list){
 
 // ROOM USERS LIST
 int request_users_here(ROOM_CLIENT_LIST_RESPONSE *users){
+  if(my_server == INF) return -1;
   CLIENT_REQUEST req;
   req.type = ROOM_CLIENT_LIST;
   req.client_msgid = my_queue;
@@ -143,6 +147,7 @@ int request_users_here(ROOM_CLIENT_LIST_RESPONSE *users){
 
 // GLOBAL USERS LIST
 int request_all_users(GLOBAL_CLIENT_LIST_RESPONSE *users){
+  if(my_server == INF) return -1;
   CLIENT_REQUEST req;
   req.type = GLOBAL_CLIENT_LIST;
   req.client_msgid = my_queue;
@@ -155,6 +160,7 @@ int request_all_users(GLOBAL_CLIENT_LIST_RESPONSE *users){
 
 // SEND MESSAGE
 int send_message(char * text){
+  if(my_server == INF) return -1;
   TEXT_MESSAGE req;
   req.type = PUBLIC;
   req.from_id = my_queue;
@@ -168,6 +174,7 @@ int send_message(char * text){
 
 // WHISPER
 int send_whisper(char * user, char * text){
+  if(my_server == INF) return -1;
   TEXT_MESSAGE req;
   req.type = PRIVATE;
   req.from_id = my_queue;
